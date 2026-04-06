@@ -1816,21 +1816,42 @@ async function submitCardScan(){
 
     var MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
     var cardData=null;
+    var lastError='';
     for(var m=0;m<MODELS.length;m++){
       try{
+        console.log('Trying model:',MODELS[m]);
         var res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+MODELS[m]+':generateContent?key='+GEMINI_API_KEY,{
           method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
         });
-        if(!res.ok)continue;
+        if(!res.ok){
+          var errBody='';try{errBody=JSON.stringify(await res.json())}catch(x){}
+          lastError=MODELS[m]+': HTTP '+res.status+' '+errBody;
+          console.error(lastError);
+          continue;
+        }
         var data=await res.json();
+        console.log('Gemini response:',JSON.stringify(data).substring(0,500));
+        if(!data.candidates||!data.candidates.length){
+          lastError=MODELS[m]+': candidates が空です';
+          if(data.promptFeedback)lastError+=' (blockReason: '+(data.promptFeedback.blockReason||'unknown')+')';
+          console.error(lastError);
+          continue;
+        }
         var text=data.candidates[0].content.parts[0].text;
-        cardData=JSON.parse(text.match(/\{[\s\S]*\}/)[0]);
+        var jsonMatch=text.match(/\{[\s\S]*\}/);
+        if(!jsonMatch){lastError=MODELS[m]+': JSONが見つかりません: '+text.substring(0,200);console.error(lastError);continue;}
+        cardData=JSON.parse(jsonMatch[0]);
         break;
-      }catch(e){continue;}
+      }catch(e){lastError=MODELS[m]+': '+e.message;console.error(lastError);continue;}
     }
 
     loading.style.display='none';
-    if(!cardData){result.innerHTML='<p style="color:#c0392b">読み取りに失敗しました。別の画像をお試しください。</p>';result.style.display='';document.getElementById('scan-submit-btn').disabled=false;return;}
+    if(!cardData){
+      var errMsg='読み取りに失敗しました。';
+      if(lastError)errMsg+='<br><span style="font-size:.8em;color:#888">'+escapeHtml(lastError)+'</span>';
+      result.innerHTML='<p style="color:#c0392b">'+errMsg+'</p>';
+      result.style.display='';document.getElementById('scan-submit-btn').disabled=false;return;
+    }
 
     var rh='<h3>読み取り結果</h3>';
     var fields=[
