@@ -203,6 +203,32 @@ textarea.form-input{resize:vertical;min-height:80px}
 .scan-result .field{display:flex;gap:8px;margin-bottom:6px;font-size:.85em}
 .scan-result .field .label{color:#5a7a6a;min-width:60px;flex-shrink:0}
 .scan-result .field .value{color:#1a3a2a;font-weight:500}
+
+/* Email list */
+.email-list{display:flex;flex-direction:column;gap:6px}
+.email-item{display:flex;gap:10px;padding:10px 12px;background:#f5f9f7;border-radius:8px;cursor:pointer;font-size:.85em;transition:background .15s;text-decoration:none;color:inherit}
+.email-item:hover{background:#e8f0ec}
+.email-item .email-icon{font-size:1.1em;flex-shrink:0;margin-top:2px}
+.email-item .email-body{flex:1;min-width:0}
+.email-item .email-subject{font-weight:600;color:#1a3a2a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.email-item .email-snippet{font-size:.8em;color:#5a7a6a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.email-item .email-date{font-size:.75em;color:#8a9e92;flex-shrink:0;white-space:nowrap}
+
+/* Calendar events */
+.event-list{display:flex;flex-direction:column;gap:6px}
+.event-item{display:flex;gap:10px;padding:10px 12px;background:#f5f9f7;border-radius:8px;font-size:.85em;cursor:pointer;text-decoration:none;color:inherit}
+.event-item:hover{background:#e8f0ec}
+.event-item .event-dot{width:8px;height:8px;border-radius:50%;background:#1a6b4a;flex-shrink:0;margin-top:6px}
+.event-item .event-dot.past{background:#8a9e92}
+.event-item .event-body{flex:1}
+.event-item .event-title{font-weight:600;color:#1a3a2a}
+.event-item .event-time{font-size:.8em;color:#5a7a6a;margin-top:2px}
+
+/* Section toggle */
+.section-toggle{display:flex;align-items:center;justify-content:space-between;cursor:pointer;padding:4px 0}
+.section-toggle h3{font-size:.9em;color:#1a6b4a;margin:0}
+.section-toggle .arrow{color:#8a9e92;font-size:.8em;transition:transform .2s}
+.section-toggle .arrow.open{transform:rotate(90deg)}
 </style>
 </head>
 <body>
@@ -445,7 +471,7 @@ textarea.form-input{resize:vertical;min-height:80px}
 <script>
 // ==================== Config ====================
 var CLIENT_ID='595564106580-hsrunbvfacmr23d2jopl462taqilip75.apps.googleusercontent.com';
-var SCOPES='https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets';
+var SCOPES='https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar';
 var GEMINI_API_KEY='';
 var CONFIG_FILENAME='choreia-flow-config.json';
 var BLOCKED_DOMAINS=['gmail.com','googlemail.com','yahoo.co.jp','yahoo.com','hotmail.com','outlook.com','outlook.jp','icloud.com','me.com','mac.com','aol.com','protonmail.com','zoho.com','live.com','live.jp','msn.com','nifty.com','biglobe.ne.jp','ocn.ne.jp'];
@@ -875,13 +901,32 @@ function showCustomerDetail(id){
     });
   }else{h+='<p style="font-size:.85em;color:#5a7a6a">なし</p>';}
 
-  h+='<div class="detail-actions">';
+  // Gmail section
+  if(c.email){
+    h+='<div style="margin-top:16px"><h3 style="font-size:.9em;color:#1a6b4a;margin-bottom:8px">&#9993; メール履歴</h3>';
+    h+='<div id="customer-emails"><div class="loading-state" style="padding:16px"><div class="spinner"></div><div style="font-size:.85em">Gmail検索中...</div></div></div></div>';
+  }
+
+  // Calendar section
+  h+='<div style="margin-top:16px"><h3 style="font-size:.9em;color:#1a6b4a;margin-bottom:8px">&#128197; カレンダー</h3>';
+  h+='<div id="customer-events"><div class="loading-state" style="padding:16px"><div class="spinner"></div><div style="font-size:.85em">予定を取得中...</div></div></div>';
+  h+='<button class="btn-small" style="margin-top:8px" onclick="showNewEventForm(\''+escapeAttr(id)+'\')">+ 予定を追加</button></div>';
+
+  // Gemini AI advice section
+  h+='<div style="margin-top:16px"><h3 style="font-size:.9em;color:#1a6b4a;margin-bottom:8px">&#129302; AIアドバイス</h3>';
+  h+='<div id="customer-ai-advice"><button class="btn-secondary" onclick="getCustomerAdvice(\''+escapeAttr(id)+'\')" style="width:100%">&#10024; この顧客へのアドバイスを取得</button></div></div>';
+
+  h+='<div class="detail-actions" style="margin-top:16px">';
   h+='<button class="btn-secondary" onclick="closeDetail();showDealForm(null,\''+escapeAttr(id)+'\')">+ 案件追加</button>';
   h+='<button class="btn-secondary" onclick="closeDetail();showActivityForm(\''+escapeAttr(id)+'\')">+ 活動記録</button>';
   h+='</div>';
 
   document.getElementById('detail-content').innerHTML=h;
   document.getElementById('detail-overlay').classList.add('active');
+
+  // Load Gmail and Calendar async
+  if(c.email)loadCustomerEmails(c.email);
+  loadCustomerEvents(c.company,c.contact);
 }
 
 async function deleteCustomer(id){
@@ -1186,6 +1231,199 @@ function renderDashboard(){
   // Pipeline
   var pipelineDeals=deals.filter(function(d){return d.status!=='paid'&&d.status!=='lost'});
   renderDealPipeline(pipelineDeals,'dashboard-pipeline');
+}
+
+// ==================== Gmail Integration ====================
+async function loadCustomerEmails(email){
+  var container=document.getElementById('customer-emails');
+  if(!container)return;
+  try{
+    var q=encodeURIComponent('from:'+email+' OR to:'+email);
+    var data=await apiFetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?q='+q+'&maxResults=10');
+    var messages=data.messages||[];
+    if(!messages.length){container.innerHTML='<p style="font-size:.85em;color:#5a7a6a">メール履歴なし</p>';return;}
+    var h='<div class="email-list">';
+    // Fetch details for each message
+    var details=await Promise.all(messages.slice(0,8).map(function(m){
+      return apiFetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/'+m.id+'?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date');
+    }));
+    details.forEach(function(msg){
+      var subj='(件名なし)',from='',date='';
+      (msg.payload.headers||[]).forEach(function(hdr){
+        if(hdr.name==='Subject')subj=hdr.value;
+        if(hdr.name==='From')from=hdr.value;
+        if(hdr.name==='Date')date=hdr.value;
+      });
+      // Parse from name
+      var fromName=from.replace(/<.*>/,'').trim()||from;
+      // Format date
+      var dateStr='';
+      try{var d=new Date(date);dateStr=(d.getMonth()+1)+'/'+d.getDate();}catch(e){dateStr=date;}
+      h+='<a class="email-item" href="https://mail.google.com/mail/u/0/#search/rfc822msgid:'+encodeURIComponent(msg.id)+'" target="_blank" rel="noopener">';
+      h+='<span class="email-icon">&#9993;</span>';
+      h+='<div class="email-body"><div class="email-subject">'+escapeHtml(subj)+'</div><div class="email-snippet">'+escapeHtml(fromName)+'</div></div>';
+      h+='<span class="email-date">'+escapeHtml(dateStr)+'</span>';
+      h+='</a>';
+    });
+    h+='</div>';
+    if(messages.length>8)h+='<p style="font-size:.8em;color:#5a7a6a;margin-top:6px;text-align:center">他 '+(messages.length-8)+' 件</p>';
+    container.innerHTML=h;
+  }catch(e){
+    container.innerHTML='<p style="font-size:.85em;color:#5a7a6a">メールの取得に失敗しました</p>';
+    console.error('Gmail error:',e);
+  }
+}
+
+// ==================== Calendar Integration ====================
+async function loadCustomerEvents(company,contact){
+  var container=document.getElementById('customer-events');
+  if(!container)return;
+  try{
+    var now=new Date();
+    var past=new Date(now);past.setMonth(past.getMonth()-3);
+    var future=new Date(now);future.setMonth(future.getMonth()+3);
+    var q=encodeURIComponent(company+(contact?' '+contact:''));
+    var data=await apiFetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?q='+q+'&timeMin='+past.toISOString()+'&timeMax='+future.toISOString()+'&maxResults=10&singleEvents=true&orderBy=startTime');
+    var events=data.items||[];
+    if(!events.length){container.innerHTML='<p style="font-size:.85em;color:#5a7a6a">関連する予定なし</p>';return;}
+    var h='<div class="event-list">';
+    events.forEach(function(ev){
+      var start=ev.start.dateTime||ev.start.date||'';
+      var isPast=new Date(start)<now;
+      var timeStr='';
+      try{
+        var d=new Date(start);
+        timeStr=(d.getMonth()+1)+'/'+d.getDate();
+        if(ev.start.dateTime)timeStr+=' '+d.getHours()+':'+String(d.getMinutes()).padStart(2,'0');
+      }catch(e){timeStr=start;}
+      h+='<a class="event-item" href="'+escapeAttr(ev.htmlLink||'#')+'" target="_blank" rel="noopener">';
+      h+='<span class="event-dot'+(isPast?' past':'')+'"></span>';
+      h+='<div class="event-body"><div class="event-title">'+escapeHtml(ev.summary||'(無題)')+'</div><div class="event-time">'+escapeHtml(timeStr)+'</div></div>';
+      h+='</a>';
+    });
+    h+='</div>';
+    container.innerHTML=h;
+  }catch(e){
+    container.innerHTML='<p style="font-size:.85em;color:#5a7a6a">カレンダーの取得に失敗しました</p>';
+    console.error('Calendar error:',e);
+  }
+}
+
+function showNewEventForm(customerId){
+  var c=customers.find(function(x){return x.id===customerId});if(!c)return;
+  document.getElementById('modal-title').textContent='予定を追加';
+  var tomorrow=new Date();tomorrow.setDate(tomorrow.getDate()+1);
+  var defaultDate=tomorrow.getFullYear()+'-'+String(tomorrow.getMonth()+1).padStart(2,'0')+'-'+String(tomorrow.getDate()).padStart(2,'0');
+  var h='<form onsubmit="createCalendarEvent(event,\''+escapeAttr(customerId)+'\');return false">';
+  h+='<div class="form-group"><label>件名 *</label><input class="form-input" id="f-evtitle" required value="'+escapeAttr(c.company)+' 打合せ"></div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+='<div class="form-group"><label>日付</label><input class="form-input" id="f-evdate" type="date" value="'+defaultDate+'" required></div>';
+  h+='<div class="form-group"><label>時間</label><input class="form-input" id="f-evtime" type="time" value="10:00"></div></div>';
+  h+='<div class="form-group"><label>時間(分)</label><input class="form-input" id="f-evduration" type="number" value="60" min="15" step="15"></div>';
+  h+='<div class="form-group"><label>場所</label><input class="form-input" id="f-evloc" value="'+escapeAttr(c.address||'')+'"></div>';
+  h+='<div class="form-group"><label>メモ</label><textarea class="form-input" id="f-evmemo"></textarea></div>';
+  h+='<button class="btn-primary" type="submit">Googleカレンダーに追加</button></form>';
+  document.getElementById('modal-body').innerHTML=h;
+  openModal();
+}
+
+async function createCalendarEvent(e,customerId){
+  e.preventDefault();
+  var title=document.getElementById('f-evtitle').value.trim();
+  var date=document.getElementById('f-evdate').value;
+  var time=document.getElementById('f-evtime').value||'10:00';
+  var duration=parseInt(document.getElementById('f-evduration').value)||60;
+  var loc=document.getElementById('f-evloc').value.trim();
+  var memo=document.getElementById('f-evmemo').value.trim();
+
+  var startDt=new Date(date+'T'+time+':00');
+  var endDt=new Date(startDt.getTime()+duration*60000);
+
+  var body={
+    summary:title,
+    location:loc,
+    description:memo,
+    start:{dateTime:startDt.toISOString(),timeZone:'Asia/Tokyo'},
+    end:{dateTime:endDt.toISOString(),timeZone:'Asia/Tokyo'}
+  };
+  try{
+    await apiFetch('https://www.googleapis.com/calendar/v3/calendars/primary/events',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
+    });
+    closeModal();showToast('カレンダーに追加しました');
+    // Also log as activity
+    var c=customers.find(function(x){return x.id===customerId})||{};
+    var act={id:generateId(),customerId:customerId,company:c.company||'',dealId:'',type:'meeting',content:title+(loc?' @'+loc:''),assignee:currentUser.name,datetime:date};
+    activities.push(act);appendRow('活動',act,ACTIVITY_FIELDS);
+    // Reload events in detail
+    loadCustomerEvents(c.company,c.contact);
+  }catch(e){showToast('カレンダーへの追加に失敗しました');console.error(e);}
+}
+
+// ==================== Gemini AI Advice ====================
+async function getCustomerAdvice(customerId){
+  var c=customers.find(function(x){return x.id===customerId});if(!c)return;
+  if(!GEMINI_API_KEY){showToast('管理者設定からGemini APIキーを登録してください');return;}
+
+  var container=document.getElementById('customer-ai-advice');
+  container.innerHTML='<div class="loading-state" style="padding:16px"><div class="spinner"></div><div style="font-size:.85em">AIが分析中...</div></div>';
+
+  var relatedDeals=deals.filter(function(d){return d.customerId===customerId});
+  var relatedActivities=activities.filter(function(a){return a.customerId===customerId});
+  relatedActivities.sort(function(a,b){return (b.datetime||'').localeCompare(a.datetime||'');});
+
+  // Build context
+  var ctx='## 顧客情報\n';
+  ctx+='会社名: '+c.company+'\n担当者: '+c.contact+'\n部署: '+c.department+'\n役職: '+c.title+'\n登録日: '+c.createdAt+'\n';
+  if(c.memo)ctx+='メモ: '+c.memo+'\n';
+
+  ctx+='\n## 案件 ('+relatedDeals.length+'件)\n';
+  relatedDeals.forEach(function(d){
+    ctx+='- '+d.name+' ['+getStatusLabel(d.status)+'] '+formatCurrency(d.amount)+' 担当:'+d.assignee+' 開始:'+d.startDate+(d.deadline?' 期限:'+d.deadline:'')+'\n';
+  });
+
+  ctx+='\n## 活動履歴 (直近20件)\n';
+  relatedActivities.slice(0,20).forEach(function(a){
+    var at=ACTIVITY_TYPES.find(function(t){return t.key===a.type})||{label:a.type};
+    ctx+='- '+a.datetime+' ['+at.label+'] '+a.content+' ('+a.assignee+')\n';
+  });
+
+  ctx+='\n## 今日の日付\n'+todayStr()+'\n';
+
+  var prompt=ctx+'\n上記の顧客との取引・活動履歴を分析して、以下の観点でアドバイスしてください:\n'+
+    '1. この顧客との関係性の傾向（連絡頻度、対応パターン）\n'+
+    '2. 次にやるべきアクション（具体的に）\n'+
+    '3. リスクや注意点（放置している案件、期限切れなど）\n'+
+    '4. 商機の可能性（アップセル、新規提案のチャンス）\n'+
+    '日本語で、箇条書きで簡潔に回答してください。';
+
+  try{
+    var body={
+      contents:[{parts:[{text:prompt}]}],
+      generationConfig:{temperature:0.3,maxOutputTokens:1024}
+    };
+    var MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
+    var advice=null;
+    for(var m=0;m<MODELS.length;m++){
+      try{
+        var res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+MODELS[m]+':generateContent?key='+GEMINI_API_KEY,{
+          method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
+        });
+        if(!res.ok)continue;
+        var data=await res.json();
+        advice=data.candidates[0].content.parts[0].text;
+        break;
+      }catch(e){continue;}
+    }
+    if(!advice){container.innerHTML='<p style="color:#c0392b;font-size:.85em">アドバイスの取得に失敗しました</p>';return;}
+    // Simple markdown-like rendering
+    var html=escapeHtml(advice).replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');
+    container.innerHTML='<div style="font-size:.85em;line-height:1.7;color:#1a3a2a;background:#f5f9f7;padding:14px;border-radius:10px;border:1px solid #d0ddd6">'+html+'</div>'+
+      '<button class="btn-secondary" style="margin-top:8px;width:100%" onclick="getCustomerAdvice(\''+escapeAttr(customerId)+'\')">&#128260; 再分析</button>';
+  }catch(e){
+    container.innerHTML='<p style="color:#c0392b;font-size:.85em">エラー: '+escapeHtml(e.message)+'</p>';
+    console.error(e);
+  }
 }
 
 // ==================== Business Card Scan ====================
