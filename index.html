@@ -891,6 +891,32 @@ async function createDriveFolder(parentId,name){
 
 function folderUrlFromId(id){return 'https://drive.google.com/drive/folders/'+id;}
 
+async function uploadFileToFolder(parentId,name,base64,mimeType){
+  var metadata={name:name,parents:[parentId]};
+  var boundary='-------choreia'+Date.now()+Math.random().toString(36).slice(2);
+  var body='--'+boundary+'\r\n'+
+    'Content-Type: application/json; charset=UTF-8\r\n\r\n'+
+    JSON.stringify(metadata)+'\r\n'+
+    '--'+boundary+'\r\n'+
+    'Content-Type: '+mimeType+'\r\n'+
+    'Content-Transfer-Encoding: base64\r\n\r\n'+
+    base64+'\r\n'+
+    '--'+boundary+'--';
+  var res=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+accessToken,'Content-Type':'multipart/related; boundary='+boundary},
+    body:body
+  });
+  if(!res.ok){var t='';try{t=await res.text();}catch(x){}throw new Error('upload failed: '+res.status+' '+t);}
+  return await res.json();
+}
+
+function timestampForFile(){
+  var d=new Date();
+  function p(n){return String(n).padStart(2,'0');}
+  return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'_'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());
+}
+
 // Find a folder under parentId whose name starts with the given customer ID prefix.
 // Matches both "100003_..." and "10003-_..." style.
 function matchFolderByCustomerId(folders,custId){
@@ -1179,16 +1205,38 @@ async function saveCustomer(e,editId){
       idx=customers.length-1;
       await appendRow(sheetName,obj,CUSTOMER_FIELDS,custSsId);
     }
+    var cardForUpload=pendingCardForSave; // capture before closeModal clears it
     closeModal();renderCustomers();showToast(editId?'更新しました':'登録しました');
-    // Ensure Drive folder (best-effort, non-blocking for UX)
-    if(orgConfig&&orgConfig.customerFolderParentId&&!obj.folderUrl){
-      ensureCustomerFolder(obj).then(function(f){
-        obj.folderUrl=f.webViewLink||folderUrlFromId(f.id);
-        if(idx>=0&&customers[idx])customers[idx].folderUrl=obj.folderUrl;
-        return updateRow(sheetName,idx,obj,CUSTOMER_FIELDS,custSsId);
-      }).then(function(){
-        showToast('フォルダを作成・連携しました');
-      }).catch(function(err){console.error('folder ensure failed:',err);showToast('フォルダ連携に失敗: '+err.message);});
+    // Ensure Drive folder + upload card images (best-effort, non-blocking for UX)
+    if(orgConfig&&orgConfig.customerFolderParentId){
+      (async function(){
+        try{
+          var folder=null;
+          if(!obj.folderUrl){
+            folder=await ensureCustomerFolder(obj);
+            obj.folderUrl=folder.webViewLink||folderUrlFromId(folder.id);
+            if(idx>=0&&customers[idx])customers[idx].folderUrl=obj.folderUrl;
+            await updateRow(sheetName,idx,obj,CUSTOMER_FIELDS,custSsId);
+            showToast('フォルダを作成・連携しました');
+          }
+          // Upload card images if present
+          if(cardForUpload&&(cardForUpload._imgFront||cardForUpload._imgBack)){
+            var folderId=folder?folder.id:(obj.folderUrl.match(/folders\/([a-zA-Z0-9_-]+)/)||[])[1];
+            if(!folderId){console.warn('cannot determine folder id for upload');return;}
+            var ts=timestampForFile();
+            var uploads=[];
+            if(cardForUpload._imgFront){
+              var lblF=cardForUpload._imgFront.label||'front';
+              uploads.push(uploadFileToFolder(folderId,'meishi_'+lblF+'_'+ts+'.jpg',cardForUpload._imgFront.base64,cardForUpload._imgFront.mimeType));
+            }
+            if(cardForUpload._imgBack){
+              uploads.push(uploadFileToFolder(folderId,'meishi_back_'+ts+'.jpg',cardForUpload._imgBack.base64,cardForUpload._imgBack.mimeType));
+            }
+            await Promise.all(uploads);
+            showToast('名刺画像を保存しました');
+          }
+        }catch(err){console.error('folder/upload failed:',err);showToast('フォルダ/画像連携に失敗: '+err.message);}
+      })();
     }
   }catch(err){showToast('保存に失敗しました');console.error(err);}
 }
@@ -2160,7 +2208,14 @@ function loadSavedCards(){
   try{var s=sessionStorage.getItem('choreia_flow_cards');if(s)savedCards=JSON.parse(s);}catch(e){savedCards=[];}
   renderCardList();
 }
-function persistCards(){sessionStorage.setItem('choreia_flow_cards',JSON.stringify(savedCards));}
+function persistCards(){
+  try{
+    // Strip image data when persisting to sessionStorage to avoid quota errors;
+    // images stay in-memory on savedCards for the current session.
+    var slim=savedCards.map(function(c){var n={};for(var k in c){if(k!=='_imgFront'&&k!=='_imgBack')n[k]=c[k];}return n;});
+    sessionStorage.setItem('choreia_flow_cards',JSON.stringify(slim));
+  }catch(e){console.warn('persistCards skipped:',e.message);}
+}
 
 async function handleCardFile(side,files){
   if(!files||!files.length)return;
@@ -2257,8 +2312,17 @@ async function submitCardScan(){
       result.style.display='';document.getElementById('scan-submit-btn').disabled=false;return;
     }
 
-    // Add scanned date and save to list
-    cards.forEach(function(c){c.scannedAt=todayStr();c.id=generateId();});
+    // Add scanned date and source image refs (for later Drive upload to customer folder)
+    cards.forEach(function(c){
+      c.scannedAt=todayStr();
+      c.id=generateId();
+      if(scanMode==='batch'){
+        c._imgFront={base64:cardImages.batch.base64,mimeType:'image/jpeg',label:'batch'};
+      }else{
+        c._imgFront={base64:cardImages.front.base64,mimeType:'image/jpeg',label:'front'};
+        if(cardImages.back)c._imgBack={base64:cardImages.back.base64,mimeType:'image/jpeg',label:'back'};
+      }
+    });
     savedCards=cards.concat(savedCards);
     persistCards();
 
@@ -2323,18 +2387,18 @@ function deleteCard(idx){
   savedCards.splice(idx,1);persistCards();renderCardList();
 }
 
+// Card whose images should be uploaded to the customer's folder when saveCustomer succeeds.
+// Set by registerFromCard / fillFromCard, cleared after upload or modal close.
+var pendingCardForSave=null;
+
 function registerFromCard(idx){
   var c=typeof idx==='number'?savedCards[idx]:null;
   if(!c){showToast('名刺が見つかりません');return;}
-  // Stash the card so showCustomerForm can pre-fill after rendering the new schema form
-  pendingCardFill=c;
+  pendingCardForSave=c;
   showCustomerForm();
   document.getElementById('modal-title').textContent='新規顧客（名刺から）';
   applyCardToForm(c);
-  pendingCardFill=null;
 }
-
-var pendingCardFill=null;
 
 function applyCardToForm(c){
   function setVal(id,v){var el=document.getElementById(id);if(el&&v)el.value=v;}
@@ -2359,12 +2423,13 @@ function applyCardToForm(c){
 function fillFromCard(idx){
   if(idx===''||idx===undefined)return;
   var c=savedCards[parseInt(idx)];if(!c)return;
+  pendingCardForSave=c;
   applyCardToForm(c);
 }
 
 // ==================== Modal / Detail ====================
 function openModal(){document.getElementById('modal-overlay').classList.add('active');}
-function closeModal(){document.getElementById('modal-overlay').classList.remove('active');}
+function closeModal(){document.getElementById('modal-overlay').classList.remove('active');pendingCardForSave=null;}
 function closeDetail(){document.getElementById('detail-overlay').classList.remove('active');}
 
 // Close on click outside
