@@ -646,7 +646,7 @@ function toggleUserMenu(){var m=document.getElementById('user-menu');var show=m.
 function handleSignIn(){if(!tokenClient){showToast('準備中');return;}tokenClient.requestAccessToken({prompt:'consent'});}
 function handleSignOut(){
   if(accessToken)google.accounts.oauth2.revoke(accessToken);
-  accessToken=null;sessionStorage.removeItem('choreia_flow_token');
+  accessToken=null;sessionStorage.removeItem('choreia_flow_token');clearCachedConfig();
   orgConfig=null;customers=[];deals=[];activities=[];
   document.getElementById('auth-out').style.display='';document.getElementById('auth-in').style.display='none';
   showView('welcome');
@@ -687,17 +687,47 @@ function goBack(){
 }
 
 // ==================== Config ====================
+var CONFIG_CACHE_KEY='choreia_flow_config_cache';
+function loadCachedConfig(){
+  try{var raw=localStorage.getItem(CONFIG_CACHE_KEY);if(!raw)return null;var c=JSON.parse(raw);return (c&&c.domain===currentUser.domain)?c:null;}catch(e){return null;}
+}
+function saveCachedConfig(){
+  try{localStorage.setItem(CONFIG_CACHE_KEY,JSON.stringify(orgConfig));}catch(e){}
+}
+function clearCachedConfig(){try{localStorage.removeItem(CONFIG_CACHE_KEY);}catch(e){}}
+
 async function findConfig(){
+  // Try cache first for instant load; refresh from Drive in background
+  var cached=loadCachedConfig();
+  if(cached){
+    orgConfig=cached;
+    loadAllData().then(showMainView);
+    // Refresh in background to pick up remote changes
+    refreshConfigFromDrive();
+    return;
+  }
   try{
     var data=await apiFetch('https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent("name='"+CONFIG_FILENAME+"' and trashed=false")+'&corpora=allDrives&includeItemsFromAllDrives=true&supportsAllDrives=true&fields=files(id)');
     for(var i=0;i<(data.files||[]).length;i++){
       try{var c=await apiFetch('https://www.googleapis.com/drive/v3/files/'+data.files[i].id+'?alt=media&supportsAllDrives=true');
-        if(c.domain===currentUser.domain){orgConfig=c;orgConfig.configFileId=data.files[i].id;await loadAllData();showMainView();return;}
+        if(c.domain===currentUser.domain){orgConfig=c;orgConfig.configFileId=data.files[i].id;saveCachedConfig();await loadAllData();showMainView();return;}
       }catch(e){}
     }
   }catch(e){}
   showSetup();
 }
+
+async function refreshConfigFromDrive(){
+  try{
+    var data=await apiFetch('https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent("name='"+CONFIG_FILENAME+"' and trashed=false")+'&corpora=allDrives&includeItemsFromAllDrives=true&supportsAllDrives=true&fields=files(id)');
+    for(var i=0;i<(data.files||[]).length;i++){
+      try{var c=await apiFetch('https://www.googleapis.com/drive/v3/files/'+data.files[i].id+'?alt=media&supportsAllDrives=true');
+        if(c.domain===currentUser.domain){orgConfig=c;orgConfig.configFileId=data.files[i].id;saveCachedConfig();return;}
+      }catch(e){}
+    }
+  }catch(e){}
+}
+
 async function saveConfig(){
   try{
     var cfg=Object.assign({},orgConfig);delete cfg.configFileId;
@@ -705,6 +735,7 @@ async function saveConfig(){
       method:'PATCH',headers:{'Authorization':'Bearer '+accessToken,'Content-Type':'application/json'},body:JSON.stringify(cfg,null,2)
     });
     if(!r.ok)throw new Error('Save failed');
+    saveCachedConfig();
   }catch(e){showToast('設定の保存に失敗しました');console.error(e);}
 }
 
@@ -956,8 +987,10 @@ async function loadAllData(){
   var useExternalCustomers=custSsId&&custSsId!==SHEET_ID;
   try{
     if(useExternalCustomers){
-      // Customers come from external DB spreadsheet (List + Master sheets)
-      var dataA=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+custSsId+'/values:batchGet?ranges='+encodeURIComponent('List!A2:Z2000')+'&ranges='+encodeURIComponent('Master!A2:D200'));
+      // Fetch customer DB and Flow spreadsheet in parallel
+      var pCust=apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+custSsId+'/values:batchGet?ranges='+encodeURIComponent('List!A2:Z500')+'&ranges='+encodeURIComponent('Master!A2:D200'));
+      var pFlow=apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values:batchGet?ranges='+encodeURIComponent('案件!A2:K1000')+'&ranges='+encodeURIComponent('活動!A2:H1000'));
+      var dataA=await pCust;
       var rangesA=dataA.valueRanges||[];
       customers=parseRows(rangesA[0]&&rangesA[0].values||[],CUSTOMER_FIELDS);
       // Drop blank rows and rows where id is empty
@@ -972,8 +1005,8 @@ async function loadAllData(){
         if(r[1])customerMaster.categories.push(r[1]);
         if(r[2])customerMaster.members.push(r[2]);
       });
-      // Deals + activities still come from Flow spreadsheet
-      var dataB=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values:batchGet?ranges='+encodeURIComponent('案件!A2:K1000')+'&ranges='+encodeURIComponent('活動!A2:H1000'));
+      // Deals + activities (parallel fetch was started above)
+      var dataB=await pFlow;
       var rangesB=dataB.valueRanges||[];
       deals=parseRows(rangesB[0]&&rangesB[0].values||[],['id','customerId','company','name','status','amount','assignee','startDate','deadline','memo','updatedAt']);
       activities=parseRows(rangesB[1]&&rangesB[1].values||[],['id','customerId','company','dealId','type','content','assignee','datetime']);
