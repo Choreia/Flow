@@ -391,15 +391,29 @@ textarea.form-input{resize:vertical;min-height:80px}
     <div id="panel-cards" style="display:none">
       <div class="card">
         <h2>名刺スキャン</h2>
-        <p style="font-size:.85em;color:#5a7a6a;margin-bottom:12px">名刺の写真を撮影またはアップロードすると、AIが自動で読み取ります</p>
-        <div class="scan-area" id="scan-area" onclick="document.getElementById('card-file').click()">
-          <div class="icon">&#128247;</div>
-          <div class="title">名刺をスキャン</div>
-          <div class="desc">タップして撮影 or 画像を選択</div>
+        <p style="font-size:.85em;color:#5a7a6a;margin-bottom:12px">表面は必須、裏面は任意です。両面の情報を統合して読み取ります。</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+          <div>
+            <div class="scan-area" id="scan-area-front" onclick="document.getElementById('card-file-front').click()" style="padding:24px 12px">
+              <div class="icon">&#128247;</div>
+              <div class="title">表面</div>
+              <div class="desc">必須</div>
+            </div>
+            <input type="file" id="card-file-front" accept="image/*" capture="environment" onchange="handleCardFile('front',this.files)" style="display:none">
+            <img id="scan-img-front" style="display:none;width:100%;border-radius:8px;margin-top:8px" alt="">
+          </div>
+          <div>
+            <div class="scan-area" id="scan-area-back" onclick="document.getElementById('card-file-back').click()" style="padding:24px 12px">
+              <div class="icon">&#128260;</div>
+              <div class="title">裏面</div>
+              <div class="desc">任意</div>
+            </div>
+            <input type="file" id="card-file-back" accept="image/*" capture="environment" onchange="handleCardFile('back',this.files)" style="display:none">
+            <img id="scan-img-back" style="display:none;width:100%;border-radius:8px;margin-top:8px" alt="">
+          </div>
         </div>
-        <input type="file" id="card-file" accept="image/*" capture="environment" onchange="handleCardScan(this.files)" style="display:none">
-        <div id="scan-preview" style="display:none;margin-top:16px">
-          <img id="scan-preview-img" style="width:100%;border-radius:10px;margin-bottom:12px" alt="">
+        <button class="btn-primary" id="scan-submit-btn" onclick="submitCardScan()" disabled>読み取り開始</button>
+        <div id="scan-status" style="display:none;margin-top:16px">
           <div class="loading-state" id="scan-loading"><div class="spinner"></div><div>AIが名刺を読み取り中...</div></div>
           <div id="scan-result" class="scan-result" style="display:none"></div>
         </div>
@@ -1196,31 +1210,43 @@ function normalizeImage(file,maxSize){
   });
 }
 
-async function handleCardScan(files){
+var cardImages={front:null,back:null}; // {base64, dataUrl}
+
+async function handleCardFile(side,files){
   if(!files||!files.length)return;
+  var normalized=await normalizeImage(files[0]);
+  cardImages[side]=normalized;
+  var img=document.getElementById('scan-img-'+side);
+  img.src=normalized.dataUrl;img.style.display='';
+  document.getElementById('scan-area-'+side).style.display='none';
+  document.getElementById('scan-submit-btn').disabled=!cardImages.front;
+  // Reset result
+  document.getElementById('scan-result').style.display='none';
+  document.getElementById('scan-status').style.display='none';
+}
+
+async function submitCardScan(){
+  if(!cardImages.front){showToast('表面を撮影してください');return;}
   if(!GEMINI_API_KEY){showToast('管理者設定からGemini APIキーを登録してください');return;}
-  var file=files[0];
-  var preview=document.getElementById('scan-preview');
-  var previewImg=document.getElementById('scan-preview-img');
+
+  var status=document.getElementById('scan-status');
   var loading=document.getElementById('scan-loading');
   var result=document.getElementById('scan-result');
-
-  preview.style.display='';
-  loading.style.display='';
-  result.style.display='none';
+  status.style.display='';loading.style.display='';result.style.display='none';
+  document.getElementById('scan-submit-btn').disabled=true;
 
   try{
-    // Normalize orientation via canvas (auto-rotates EXIF)
-    var normalized=await normalizeImage(file);
-    var base64=normalized.base64;
-    previewImg.src=normalized.dataUrl;
+    var parts=[];
+    parts.push({inlineData:{mimeType:'image/jpeg',data:cardImages.front.base64}});
+    parts.push({text:'【表面】'});
+    if(cardImages.back){
+      parts.push({inlineData:{mimeType:'image/jpeg',data:cardImages.back.base64}});
+      parts.push({text:'【裏面】'});
+    }
+    parts.push({text:'この名刺の表面'+(cardImages.back?'と裏面':'')+' の情報を統合して読み取り、以下のJSON形式で返してください。読み取れない項目は空文字にしてください。氏名・会社名・部署・役職は必ず日本語（漢字・かな）で返してください。ローマ字表記しかない場合はカタカナに変換してください。表裏に同じ項目がある場合は日本語側を優先してください。\n{"company":"会社名","contact":"氏名","department":"部署","title":"役職","tel":"電話番号","mobile":"携帯番号","email":"メールアドレス","address":"住所","url":"URL","fax":"FAX","note":"その他（事業内容・資格など裏面の補足情報）"}'});
 
-    // Call Gemini
     var body={
-      contents:[{parts:[
-        {inlineData:{mimeType:'image/jpeg',data:base64}},
-        {text:'この名刺の情報を読み取って、以下のJSON形式で返してください。読み取れない項目は空文字にしてください。氏名・会社名・部署・役職は必ず日本語（漢字・かな）で返してください。ローマ字表記しかない場合はカタカナに変換してください。\n{"company":"会社名","contact":"氏名","department":"部署","title":"役職","tel":"電話番号","email":"メールアドレス","address":"住所","url":"URL","fax":"FAX"}'}
-      ]}],
+      contents:[{parts:parts}],
       generationConfig:{temperature:0.1,maxOutputTokens:1024,responseMimeType:'application/json'}
     };
 
@@ -1240,26 +1266,41 @@ async function handleCardScan(files){
     }
 
     loading.style.display='none';
-    if(!cardData){result.innerHTML='<p style="color:#c0392b">読み取りに失敗しました。別の画像をお試しください。</p>';result.style.display='';return;}
+    if(!cardData){result.innerHTML='<p style="color:#c0392b">読み取りに失敗しました。別の画像をお試しください。</p>';result.style.display='';document.getElementById('scan-submit-btn').disabled=false;return;}
 
     var rh='<h3>読み取り結果</h3>';
     var fields=[
       ['company','会社名'],['contact','氏名'],['department','部署'],['title','役職'],
-      ['tel','TEL'],['email','メール'],['address','住所'],['url','URL'],['fax','FAX']
+      ['tel','TEL'],['mobile','携帯'],['email','メール'],['address','住所'],['url','URL'],['fax','FAX'],['note','その他']
     ];
     fields.forEach(function(f){
       if(cardData[f[0]])rh+='<div class="field"><span class="label">'+f[1]+'</span><span class="value">'+escapeHtml(cardData[f[0]])+'</span></div>';
     });
-    rh+='<button class="btn-primary" style="margin-top:12px" onclick="registerFromCard()">この内容で顧客登録</button>';
+    rh+='<div style="display:flex;gap:8px;margin-top:12px">';
+    rh+='<button class="btn-primary" style="flex:1" onclick="registerFromCard()">顧客登録</button>';
+    rh+='<button class="btn-secondary" onclick="resetCardScan()">別の名刺</button>';
+    rh+='</div>';
     result.innerHTML=rh;result.style.display='';
 
-    // Store for registration
     window._scannedCard=cardData;
   }catch(e){
     loading.style.display='none';
     result.innerHTML='<p style="color:#c0392b">エラー: '+escapeHtml(e.message)+'</p>';result.style.display='';
+    document.getElementById('scan-submit-btn').disabled=false;
     console.error(e);
   }
+}
+
+function resetCardScan(){
+  cardImages={front:null,back:null};
+  document.getElementById('scan-img-front').style.display='none';
+  document.getElementById('scan-img-back').style.display='none';
+  document.getElementById('scan-area-front').style.display='';
+  document.getElementById('scan-area-back').style.display='';
+  document.getElementById('scan-submit-btn').disabled=true;
+  document.getElementById('scan-status').style.display='none';
+  document.getElementById('card-file-front').value='';
+  document.getElementById('card-file-back').value='';
 }
 
 function registerFromCard(){
@@ -1276,7 +1317,8 @@ function registerFromCard(){
   h+='<div class="form-group"><label>TEL</label><input class="form-input" id="f-tel" type="tel" value="'+escapeAttr(c.tel||'')+'"></div>';
   h+='<div class="form-group"><label>メール</label><input class="form-input" id="f-email" type="email" value="'+escapeAttr(c.email||'')+'"></div>';
   h+='<div class="form-group"><label>住所</label><input class="form-input" id="f-address" value="'+escapeAttr(c.address||'')+'"></div>';
-  h+='<div class="form-group"><label>メモ</label><textarea class="form-input" id="f-memo">'+(c.url?'URL: '+escapeHtml(c.url)+'\n':'')+(c.fax?'FAX: '+escapeHtml(c.fax):'')+'</textarea></div>';
+  var memo=[];if(c.mobile)memo.push('携帯: '+c.mobile);if(c.url)memo.push('URL: '+c.url);if(c.fax)memo.push('FAX: '+c.fax);if(c.note)memo.push(c.note);
+  h+='<div class="form-group"><label>メモ</label><textarea class="form-input" id="f-memo">'+escapeHtml(memo.join('\n'))+'</textarea></div>';
   h+='<button class="btn-primary" type="submit">登録</button></form>';
   document.getElementById('modal-body').innerHTML=h;
   openModal();
