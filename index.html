@@ -1175,6 +1175,27 @@ function renderDashboard(){
 }
 
 // ==================== Business Card Scan ====================
+// Normalize image orientation via canvas (applies EXIF rotation)
+function normalizeImage(file,maxSize){
+  maxSize=maxSize||1600;
+  return new Promise(function(resolve){
+    var img=new Image();
+    img.onload=function(){
+      var w=img.naturalWidth,h=img.naturalHeight;
+      var scale=Math.min(1,maxSize/Math.max(w,h));
+      var cw=Math.round(w*scale),ch=Math.round(h*scale);
+      var canvas=document.createElement('canvas');
+      canvas.width=cw;canvas.height=ch;
+      var ctx=canvas.getContext('2d');
+      ctx.drawImage(img,0,0,cw,ch);
+      var dataUrl=canvas.toDataURL('image/jpeg',0.9);
+      URL.revokeObjectURL(img.src);
+      resolve({base64:dataUrl.split(',')[1],dataUrl:dataUrl,mimeType:'image/jpeg'});
+    };
+    img.src=URL.createObjectURL(file);
+  });
+}
+
 async function handleCardScan(files){
   if(!files||!files.length)return;
   if(!GEMINI_API_KEY){showToast('管理者設定からGemini APIキーを登録してください');return;}
@@ -1184,24 +1205,21 @@ async function handleCardScan(files){
   var loading=document.getElementById('scan-loading');
   var result=document.getElementById('scan-result');
 
-  previewImg.src=URL.createObjectURL(file);
   preview.style.display='';
   loading.style.display='';
   result.style.display='none';
 
   try{
-    // Read file as base64
-    var base64=await new Promise(function(resolve){
-      var reader=new FileReader();
-      reader.onload=function(){resolve(reader.result.split(',')[1]);};
-      reader.readAsDataURL(file);
-    });
+    // Normalize orientation via canvas (auto-rotates EXIF)
+    var normalized=await normalizeImage(file);
+    var base64=normalized.base64;
+    previewImg.src=normalized.dataUrl;
 
     // Call Gemini
     var body={
       contents:[{parts:[
-        {inlineData:{mimeType:file.type,data:base64}},
-        {text:'この名刺の情報を読み取って、以下のJSON形式で返してください。読み取れない項目は空文字にしてください。\n{"company":"会社名","contact":"氏名","department":"部署","title":"役職","tel":"電話番号","email":"メールアドレス","address":"住所","url":"URL","fax":"FAX"}'}
+        {inlineData:{mimeType:'image/jpeg',data:base64}},
+        {text:'この名刺の情報を読み取って、以下のJSON形式で返してください。読み取れない項目は空文字にしてください。氏名・会社名・部署・役職は必ず日本語（漢字・かな）で返してください。ローマ字表記しかない場合はカタカナに変換してください。\n{"company":"会社名","contact":"氏名","department":"部署","title":"役職","tel":"電話番号","email":"メールアドレス","address":"住所","url":"URL","fax":"FAX"}'}
       ]}],
       generationConfig:{temperature:0.1,maxOutputTokens:1024,responseMimeType:'application/json'}
     };
