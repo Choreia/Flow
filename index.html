@@ -329,6 +329,15 @@ textarea.form-input{resize:vertical;min-height:80px}
         <button class="btn-small" onclick="saveCustomerSpreadsheetId()">保存</button>
       </div>
       <div id="customer-ss-status" style="font-size:.8em;color:#5a7a6a;margin-top:4px"></div>
+      <h3 style="font-size:.85em;margin:12px 0 6px">顧客フォルダ親フォルダ</h3>
+      <p style="font-size:.8em;color:#5a7a6a;margin-bottom:8px">顧客ごとの「{ID}_{会社名}」サブフォルダを作成する親フォルダのIDまたはURL</p>
+      <div style="display:flex;gap:8px">
+        <input class="form-input" id="customer-folder-input" placeholder="フォルダID または URL" style="flex:1">
+        <button class="btn-small" onclick="saveCustomerFolderParent()">保存</button>
+      </div>
+      <div id="customer-folder-status" style="font-size:.8em;color:#5a7a6a;margin-top:4px"></div>
+      <button class="btn-small" id="folder-sync-btn" onclick="bulkSyncCustomerFolders()" style="margin-top:8px;width:100%">全顧客のフォルダを同期（既存マッチ＋新規作成）</button>
+      <div id="folder-sync-status" style="font-size:.8em;color:#5a7a6a;margin-top:4px"></div>
       <hr style="border:none;border-top:1px solid #e0e8e4;margin:16px 0">
       <h3 style="font-size:.85em;margin-bottom:6px">人事評価シート</h3>
       <p style="font-size:.8em;color:#5a7a6a;margin-bottom:8px">人事フォルダに評価用スプレッドシートを作成します（管理者のみ閲覧）</p>
@@ -783,7 +792,7 @@ function getAdmins(){if(!orgConfig)return[];return orgConfig.admins||[orgConfig.
 function toggleAdminPanel(){
   var p=document.getElementById('admin-panel');var visible=p.style.display!=='none';
   p.style.display=visible?'none':'';
-  if(!visible){renderAdminList();loadGeminiKey();loadCustomerSpreadsheetId();loadHrSetupStatus();}
+  if(!visible){renderAdminList();loadGeminiKey();loadCustomerSpreadsheetId();loadCustomerFolderParent();loadHrSetupStatus();}
 }
 function renderAdminList(){
   var admins=getAdmins();var h='';
@@ -827,7 +836,6 @@ function loadCustomerSpreadsheetId(){
 }
 async function saveCustomerSpreadsheetId(){
   var raw=document.getElementById('customer-ss-input').value.trim();
-  // Allow pasting full URL — extract the ID
   var m=raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
   var id=m?m[1]:raw;
   orgConfig.customerSpreadsheetId=id;
@@ -836,6 +844,77 @@ async function saveCustomerSpreadsheetId(){
     showToast('保存しました');
     await loadAllData();renderCustomers();
   }catch(e){showToast('保存に失敗しました');console.error(e);}
+}
+function loadCustomerFolderParent(){
+  var input=document.getElementById('customer-folder-input');
+  var status=document.getElementById('customer-folder-status');
+  if(!input)return;
+  input.value=orgConfig.customerFolderParentId||'';
+  status.textContent=orgConfig.customerFolderParentId?'設定済み':'未設定';
+}
+async function saveCustomerFolderParent(){
+  var raw=document.getElementById('customer-folder-input').value.trim();
+  // Accept folder URL like https://drive.google.com/drive/folders/<id> or full /folders/<id>?...
+  var m=raw.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  var id=m?m[1]:raw;
+  orgConfig.customerFolderParentId=id;
+  try{await saveConfig();
+    document.getElementById('customer-folder-status').textContent=id?'保存しました':'クリアしました';
+    showToast('保存しました');
+  }catch(e){showToast('保存に失敗しました');console.error(e);}
+}
+
+// ==================== Drive folder helpers ====================
+async function listDriveFolders(parentId){
+  // Returns all subfolders under parentId (handles shared drives)
+  var folders=[],pageToken='';
+  do{
+    var url='https://www.googleapis.com/drive/v3/files?'+
+      'q='+encodeURIComponent("'"+parentId+"' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false")+
+      '&fields=nextPageToken,files(id,name,webViewLink)'+
+      '&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives'+
+      (pageToken?'&pageToken='+pageToken:'');
+    var data=await apiFetch(url);
+    (data.files||[]).forEach(function(f){folders.push(f);});
+    pageToken=data.nextPageToken||'';
+  }while(pageToken);
+  return folders;
+}
+
+async function createDriveFolder(parentId,name){
+  var body={name:name,mimeType:'application/vnd.google-apps.folder',parents:[parentId]};
+  var data=await apiFetch('https://www.googleapis.com/drive/v3/files?fields=id,name,webViewLink&supportsAllDrives=true',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
+  });
+  return data;
+}
+
+function folderUrlFromId(id){return 'https://drive.google.com/drive/folders/'+id;}
+
+// Find a folder under parentId whose name starts with the given customer ID prefix.
+// Matches both "100003_..." and "10003-_..." style.
+function matchFolderByCustomerId(folders,custId){
+  if(!custId)return null;
+  var idStr=String(custId).trim();
+  for(var i=0;i<folders.length;i++){
+    var nm=folders[i].name||'';
+    // Strict prefix: "<id>_" or "<id>-"
+    if(nm.indexOf(idStr+'_')===0||nm.indexOf(idStr+'-')===0)return folders[i];
+  }
+  return null;
+}
+
+// Find or create the folder for a single customer. Returns folder object {id,name,webViewLink}.
+async function ensureCustomerFolder(customer,cachedFolders){
+  var parentId=orgConfig&&orgConfig.customerFolderParentId;
+  if(!parentId)throw new Error('顧客フォルダ親フォルダが未設定です');
+  if(!customer.id)throw new Error('顧客IDが未設定です');
+  var folders=cachedFolders||await listDriveFolders(parentId);
+  var existing=matchFolderByCustomerId(folders,customer.id);
+  if(existing)return existing;
+  // Create new
+  var safeName=String(customer.id)+'_'+(customer.company||'').replace(/[\\\/:*?"<>|]/g,'_');
+  return await createDriveFolder(parentId,safeName);
 }
 
 // ==================== Sheets CRUD ====================
@@ -1091,13 +1170,26 @@ async function saveCustomer(e,editId){
   try{
     var sheetName=getCustomerSheetName();
     var custSsId=getCustomerSheetId();
+    var idx;
     if(editId){
-      var idx=customers.findIndex(function(x){return x.id===editId});
+      idx=customers.findIndex(function(x){return x.id===editId});
       if(idx>=0){customers[idx]=obj;await updateRow(sheetName,idx,obj,CUSTOMER_FIELDS,custSsId);}
     }else{
-      customers.push(obj);await appendRow(sheetName,obj,CUSTOMER_FIELDS,custSsId);
+      customers.push(obj);
+      idx=customers.length-1;
+      await appendRow(sheetName,obj,CUSTOMER_FIELDS,custSsId);
     }
     closeModal();renderCustomers();showToast(editId?'更新しました':'登録しました');
+    // Ensure Drive folder (best-effort, non-blocking for UX)
+    if(orgConfig&&orgConfig.customerFolderParentId&&!obj.folderUrl){
+      ensureCustomerFolder(obj).then(function(f){
+        obj.folderUrl=f.webViewLink||folderUrlFromId(f.id);
+        if(idx>=0&&customers[idx])customers[idx].folderUrl=obj.folderUrl;
+        return updateRow(sheetName,idx,obj,CUSTOMER_FIELDS,custSsId);
+      }).then(function(){
+        showToast('フォルダを作成・連携しました');
+      }).catch(function(err){console.error('folder ensure failed:',err);showToast('フォルダ連携に失敗: '+err.message);});
+    }
   }catch(err){showToast('保存に失敗しました');console.error(err);}
 }
 
@@ -1125,6 +1217,7 @@ function showCustomerDetail(id){
   if(c.contactMobile)h+='<span style="color:#5a7a6a">担当者携帯</span><span><a href="tel:'+escapeAttr(c.contactMobile)+'" style="color:#1a6b4a">'+escapeHtml(c.contactMobile)+'</a></span>';
   if(c.email)h+='<span style="color:#5a7a6a">Email</span><span><a href="mailto:'+escapeAttr(c.email)+'" style="color:#1a6b4a">'+escapeHtml(c.email)+'</a></span>';
   if(c.folderUrl)h+='<span style="color:#5a7a6a">フォルダ</span><span><a href="'+escapeAttr(c.folderUrl)+'" target="_blank" style="color:#1a6b4a">開く &#8599;</a></span>';
+  else if(orgConfig&&orgConfig.customerFolderParentId)h+='<span style="color:#5a7a6a">フォルダ</span><span><button class="btn-small" onclick="createCustomerFolderNow(\''+escapeAttr(id)+'\')">作成・連携</button></span>';
   h+='<span style="color:#5a7a6a">登録日</span><span>'+formatDate(c.createdAt)+'</span>';
   h+='</div>';
 
@@ -1175,6 +1268,58 @@ function showCustomerDetail(id){
   // Load Gmail and Calendar async
   if(c.email)loadCustomerEmails(c.email);
   loadCustomerEvents(c.company,c.contact);
+}
+
+async function createCustomerFolderNow(id){
+  var idx=customers.findIndex(function(x){return x.id===id});
+  if(idx<0)return;
+  var c=customers[idx];
+  showToast('フォルダ処理中…');
+  try{
+    var f=await ensureCustomerFolder(c);
+    c.folderUrl=f.webViewLink||folderUrlFromId(f.id);
+    await updateRow(getCustomerSheetName(),idx,c,CUSTOMER_FIELDS,getCustomerSheetId());
+    showToast('フォルダを連携しました');
+    closeDetail();showCustomerDetail(id);
+  }catch(e){console.error(e);showToast('失敗: '+e.message);}
+}
+
+async function bulkSyncCustomerFolders(){
+  if(!orgConfig||!orgConfig.customerFolderParentId){showToast('親フォルダを先に設定してください');return;}
+  var btn=document.getElementById('folder-sync-btn');
+  var status=document.getElementById('folder-sync-status');
+  btn.disabled=true;btn.textContent='同期中…';
+  try{
+    status.textContent='フォルダ一覧を取得中…';
+    var folders=await listDriveFolders(orgConfig.customerFolderParentId);
+    status.textContent='既存フォルダ '+folders.length+' 件を取得。マッチング中…';
+    var sheetName=getCustomerSheetName();
+    var custSsId=getCustomerSheetId();
+    var matched=0,created=0,skipped=0,failed=0;
+    for(var i=0;i<customers.length;i++){
+      var c=customers[i];
+      if(!c.id){skipped++;continue;}
+      if(c.folderUrl){skipped++;continue;}
+      try{
+        var existing=matchFolderByCustomerId(folders,c.id);
+        var f;
+        if(existing){f=existing;matched++;}
+        else{
+          var safeName=String(c.id)+'_'+(c.company||'').replace(/[\\\/:*?"<>|]/g,'_');
+          f=await createDriveFolder(orgConfig.customerFolderParentId,safeName);
+          folders.push(f);
+          created++;
+        }
+        c.folderUrl=f.webViewLink||folderUrlFromId(f.id);
+        await updateRow(sheetName,i,c,CUSTOMER_FIELDS,custSsId);
+        status.textContent='処理中: '+(i+1)+'/'+customers.length+' (マッチ:'+matched+' 新規:'+created+' スキップ:'+skipped+' 失敗:'+failed+')';
+      }catch(e){console.error('row',i,e);failed++;}
+    }
+    status.textContent='完了: マッチ '+matched+' / 新規 '+created+' / スキップ '+skipped+' / 失敗 '+failed;
+    showToast('同期完了');
+    renderCustomers();
+  }catch(e){console.error(e);status.textContent='エラー: '+e.message;showToast('同期失敗');}
+  finally{btn.disabled=false;btn.textContent='全顧客のフォルダを同期（既存マッチ＋新規作成）';}
 }
 
 async function deleteCustomer(id){
