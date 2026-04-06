@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Choreia Flow — 顧客・取引管理</title>
 <meta name="description" content="顧客管理・取引管理・名刺管理をGoogleスプレッドシートで。AIが名刺を自動読取り。">
-<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Flow">
 <meta name="theme-color" content="#1a6b4a">
@@ -1667,8 +1667,8 @@ async function getHrAdvice(evalId){
     '日本語で、箇条書きで簡潔に回答してください。';
 
   try{
-    var body={contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.3,maxOutputTokens:1024}};
-    var MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
+    var body={contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.3,maxOutputTokens:8192}};
+    var MODELS=['gemini-2.5-flash'];
     var advice=null;
     for(var m=0;m<MODELS.length;m++){
       try{
@@ -1726,9 +1726,9 @@ async function getCustomerAdvice(customerId){
   try{
     var body={
       contents:[{parts:[{text:prompt}]}],
-      generationConfig:{temperature:0.3,maxOutputTokens:1024}
+      generationConfig:{temperature:0.3,maxOutputTokens:8192}
     };
-    var MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
+    var MODELS=['gemini-2.5-flash'];
     var advice=null;
     for(var m=0;m<MODELS.length;m++){
       try{
@@ -1811,10 +1811,10 @@ async function submitCardScan(){
 
     var body={
       contents:[{parts:parts}],
-      generationConfig:{temperature:0.1,maxOutputTokens:1024,responseMimeType:'application/json'}
+      generationConfig:{temperature:0.1,maxOutputTokens:8192,responseMimeType:'application/json'}
     };
 
-    var MODELS=['gemini-2.5-flash','gemini-2.0-flash'];
+    var MODELS=['gemini-2.5-flash'];
     var cardData=null;
     var lastError='';
     for(var m=0;m<MODELS.length;m++){
