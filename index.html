@@ -423,28 +423,58 @@ textarea.form-input{resize:vertical;min-height:80px}
     <div id="panel-cards" style="display:none">
       <div class="card">
         <h2>名刺スキャン</h2>
-        <p style="font-size:.85em;color:#5a7a6a;margin-bottom:12px">1枚の写真に複数の名刺（最大8枚）を並べて撮影できます。裏面は任意で追加できます。</p>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
-          <div>
-            <div class="scan-area" id="scan-area-front" onclick="document.getElementById('card-file-front').click()" style="padding:24px 12px">
-              <div class="icon">&#128247;</div>
-              <div class="title">表面（まとめて撮影OK）</div>
-              <div class="desc">必須・最大8枚</div>
-            </div>
-            <input type="file" id="card-file-front" accept="image/*" capture="environment" onchange="handleCardFile('front',this.files)" style="display:none">
-            <img id="scan-img-front" style="display:none;width:100%;border-radius:8px;margin-top:8px" alt="">
+        <!-- Mode selector -->
+        <div style="display:flex;gap:6px;margin-bottom:16px">
+          <button class="btn-secondary scan-mode-btn active" id="scan-mode-batch" onclick="setScanMode('batch')" style="flex:1;text-align:center;padding:12px;border-radius:10px">
+            <div style="font-size:1.2em;margin-bottom:4px">&#128248;</div>
+            <div style="font-weight:700;font-size:.85em">まとめて撮影</div>
+            <div style="font-size:.7em;color:#5a7a6a">表面のみ・最大8枚</div>
+          </button>
+          <button class="btn-secondary scan-mode-btn" id="scan-mode-single" onclick="setScanMode('single')" style="flex:1;text-align:center;padding:12px;border-radius:10px">
+            <div style="font-size:1.2em;margin-bottom:4px">&#128196;</div>
+            <div style="font-weight:700;font-size:.85em">1枚ずつ撮影</div>
+            <div style="font-size:.7em;color:#5a7a6a">表裏セット</div>
+          </button>
+        </div>
+
+        <!-- Batch mode -->
+        <div id="scan-batch-area">
+          <p style="font-size:.85em;color:#5a7a6a;margin-bottom:12px">名刺を並べて1枚の写真にまとめて撮影してください（表面のみ・最大8枚）</p>
+          <div class="scan-area" id="scan-area-batch" onclick="document.getElementById('card-file-batch').click()">
+            <div class="icon">&#128247;</div>
+            <div class="title">名刺をまとめて撮影</div>
+            <div class="desc">タップして撮影 or 画像を選択</div>
           </div>
-          <div>
-            <div class="scan-area" id="scan-area-back" onclick="document.getElementById('card-file-back').click()" style="padding:24px 12px">
-              <div class="icon">&#128260;</div>
-              <div class="title">裏面（まとめて撮影OK）</div>
-              <div class="desc">任意</div>
+          <input type="file" id="card-file-batch" accept="image/*" capture="environment" onchange="handleCardFile('batch',this.files)" style="display:none">
+          <img id="scan-img-batch" style="display:none;width:100%;border-radius:8px;margin-top:8px" alt="">
+        </div>
+
+        <!-- Single mode -->
+        <div id="scan-single-area" style="display:none">
+          <p style="font-size:.85em;color:#5a7a6a;margin-bottom:12px">1枚の名刺の表面と裏面をそれぞれ撮影してください</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div>
+              <div class="scan-area" id="scan-area-front" onclick="document.getElementById('card-file-front').click()" style="padding:24px 12px">
+                <div class="icon">&#128247;</div>
+                <div class="title">表面</div>
+                <div class="desc">必須</div>
+              </div>
+              <input type="file" id="card-file-front" accept="image/*" capture="environment" onchange="handleCardFile('front',this.files)" style="display:none">
+              <img id="scan-img-front" style="display:none;width:100%;border-radius:8px;margin-top:8px" alt="">
             </div>
-            <input type="file" id="card-file-back" accept="image/*" capture="environment" onchange="handleCardFile('back',this.files)" style="display:none">
-            <img id="scan-img-back" style="display:none;width:100%;border-radius:8px;margin-top:8px" alt="">
+            <div>
+              <div class="scan-area" id="scan-area-back" onclick="document.getElementById('card-file-back').click()" style="padding:24px 12px">
+                <div class="icon">&#128260;</div>
+                <div class="title">裏面</div>
+                <div class="desc">任意</div>
+              </div>
+              <input type="file" id="card-file-back" accept="image/*" capture="environment" onchange="handleCardFile('back',this.files)" style="display:none">
+              <img id="scan-img-back" style="display:none;width:100%;border-radius:8px;margin-top:8px" alt="">
+            </div>
           </div>
         </div>
-        <button class="btn-primary" id="scan-submit-btn" onclick="submitCardScan()" disabled>読み取り開始</button>
+
+        <button class="btn-primary" id="scan-submit-btn" onclick="submitCardScan()" disabled style="margin-top:16px">読み取り開始</button>
         <div id="scan-status" style="display:none;margin-top:16px">
           <div class="loading-state" id="scan-loading"><div class="spinner"></div><div>AIが名刺を読み取り中...</div></div>
           <div id="scan-result" style="display:none"></div>
@@ -1936,8 +1966,20 @@ function normalizeImage(file,maxSize){
   });
 }
 
-var cardImages={front:null,back:null};
+var cardImages={front:null,back:null,batch:null};
+var scanMode='batch'; // 'batch' or 'single'
 var savedCards=[]; // Array of scanned card data, persisted in sessionStorage
+
+function setScanMode(mode){
+  scanMode=mode;
+  document.getElementById('scan-batch-area').style.display=mode==='batch'?'':'none';
+  document.getElementById('scan-single-area').style.display=mode==='single'?'':'none';
+  document.getElementById('scan-mode-batch').classList.toggle('active',mode==='batch');
+  document.getElementById('scan-mode-single').classList.toggle('active',mode==='single');
+  document.getElementById('scan-mode-batch').style.border=mode==='batch'?'2px solid #1a6b4a':'2px solid #d0ddd6';
+  document.getElementById('scan-mode-single').style.border=mode==='single'?'2px solid #1a6b4a':'2px solid #d0ddd6';
+  resetCardScan();
+}
 
 function loadSavedCards(){
   try{var s=sessionStorage.getItem('choreia_flow_cards');if(s)savedCards=JSON.parse(s);}catch(e){savedCards=[];}
@@ -1952,7 +1994,9 @@ async function handleCardFile(side,files){
   var img=document.getElementById('scan-img-'+side);
   img.src=normalized.dataUrl;img.style.display='';
   document.getElementById('scan-area-'+side).style.display='none';
-  document.getElementById('scan-submit-btn').disabled=!cardImages.front;
+  // Enable submit based on mode
+  if(scanMode==='batch')document.getElementById('scan-submit-btn').disabled=!cardImages.batch;
+  else document.getElementById('scan-submit-btn').disabled=!cardImages.front;
   document.getElementById('scan-result').style.display='none';
   document.getElementById('scan-status').style.display='none';
 }
@@ -1983,7 +2027,8 @@ async function callGeminiWithRetry(body){
 }
 
 async function submitCardScan(){
-  if(!cardImages.front){showToast('表面を撮影してください');return;}
+  if(scanMode==='batch'&&!cardImages.batch){showToast('写真を撮影してください');return;}
+  if(scanMode==='single'&&!cardImages.front){showToast('表面を撮影してください');return;}
   if(!GEMINI_API_KEY){showToast('管理者設定からGemini APIキーを登録してください');return;}
 
   var status=document.getElementById('scan-status');
@@ -1994,16 +2039,26 @@ async function submitCardScan(){
 
   try{
     var parts=[];
-    parts.push({inlineData:{mimeType:'image/jpeg',data:cardImages.front.base64}});
-    parts.push({text:'【表面の写真】'});
-    if(cardImages.back){
-      parts.push({inlineData:{mimeType:'image/jpeg',data:cardImages.back.base64}});
-      parts.push({text:'【裏面の写真】'});
+    var prompt='';
+
+    if(scanMode==='batch'){
+      // Batch mode: single photo with multiple cards (front only)
+      parts.push({inlineData:{mimeType:'image/jpeg',data:cardImages.batch.base64}});
+      prompt='この写真に写っている名刺を全て読み取ってください。複数枚の名刺が1枚の写真に並んでいる場合は、全ての名刺を個別に読み取ってください（最大8枚）。表面のみの情報で読み取ります。';
+    }else{
+      // Single mode: one card with front + optional back
+      parts.push({inlineData:{mimeType:'image/jpeg',data:cardImages.front.base64}});
+      parts.push({text:'【表面】'});
+      if(cardImages.back){
+        parts.push({inlineData:{mimeType:'image/jpeg',data:cardImages.back.base64}});
+        parts.push({text:'【裏面】'});
+      }
+      prompt='この名刺の表面'+(cardImages.back?'と裏面':'')+'の情報を'+(cardImages.back?'統合して':'')+'読み取ってください。1枚の名刺のみです。';
     }
-    var prompt='この写真に写っている名刺を全て読み取ってください。複数枚の名刺が1枚の写真に並んでいる場合は、全ての名刺を個別に読み取ってください（最大8枚）。';
-    if(cardImages.back)prompt+='表面と裏面の写真があります。同じ人物の表裏は情報を統合してください。';
+
     prompt+='\n\n以下のJSON配列形式で返してください。読み取れない項目は空文字にしてください。氏名・会社名・部署・役職は必ず日本語（漢字・かな）で返してください。ローマ字表記しかない場合はカタカナに変換してください。';
-    prompt+='\n[{"company":"会社名","contact":"氏名","department":"部署","title":"役職","tel":"電話番号","mobile":"携帯番号","email":"メールアドレス","address":"住所","url":"URL","fax":"FAX","note":"その他（事業内容・資格など）"}]';
+    if(scanMode==='single'&&cardImages.back)prompt+='表裏に同じ項目がある場合は日本語側を優先してください。';
+    prompt+='\n[{"company":"会社名","contact":"氏名","department":"部署","title":"役職","tel":"電話番号","mobile":"携帯番号","email":"メールアドレス","address":"住所","url":"URL","fax":"FAX","note":"その他（事業内容・資格など裏面の補足情報）"}]';
     parts.push({text:prompt});
 
     var body={
@@ -2056,15 +2111,14 @@ async function submitCardScan(){
 }
 
 function resetCardScan(){
-  cardImages={front:null,back:null};
-  document.getElementById('scan-img-front').style.display='none';
-  document.getElementById('scan-img-back').style.display='none';
-  document.getElementById('scan-area-front').style.display='';
-  document.getElementById('scan-area-back').style.display='';
+  cardImages={front:null,back:null,batch:null};
+  ['front','back','batch'].forEach(function(s){
+    var img=document.getElementById('scan-img-'+s);if(img)img.style.display='none';
+    var area=document.getElementById('scan-area-'+s);if(area)area.style.display='';
+    var file=document.getElementById('card-file-'+s);if(file)file.value='';
+  });
   document.getElementById('scan-submit-btn').disabled=true;
   document.getElementById('scan-status').style.display='none';
-  document.getElementById('card-file-front').value='';
-  document.getElementById('card-file-back').value='';
 }
 
 function renderCardList(){
