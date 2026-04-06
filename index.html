@@ -247,13 +247,12 @@ textarea.form-input{resize:vertical;min-height:80px}
         </button>
       </div>
       <div id="auth-in" style="display:none">
-        <span id="user-name" style="font-weight:500"></span>
-        <img id="user-avatar" src="" alt="" onclick="toggleUserMenu()" style="display:none">
+        <span id="user-name" style="font-weight:500;cursor:pointer" onclick="toggleUserMenu()"></span>
+        <img id="user-avatar" src="" alt="" onclick="toggleUserMenu()" style="display:none;cursor:pointer">
+        <button class="btn-signout" onclick="handleSignOut()" style="margin-left:4px">ログアウト</button>
         <div class="user-menu" id="user-menu">
           <div class="user-menu-name" id="user-menu-name"></div>
           <div class="user-menu-email" id="user-menu-email"></div>
-          <hr>
-          <button class="btn-signout" onclick="handleSignOut()" style="width:100%">ログアウト</button>
         </div>
       </div>
     </div>
