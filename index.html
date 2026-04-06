@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Choreia Flow — 顧客・取引管理</title>
+<meta name="description" content="顧客管理・取引管理・名刺管理をGoogleスプレッドシートで。AIが名刺を自動読取り。">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Flow">
+<meta name="theme-color" content="#1a6b4a">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif;background:#f5f7f6;color:#1a2e24;line-height:1.6;min-height:100vh;-webkit-tap-highlight-color:transparent}
+.container{max-width:800px;margin:0 auto;padding:16px}
+@media(max-width:800px){.container{padding:12px;padding-bottom:100px}}
+
+/* Header */
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.header h1{font-size:1.3em;display:flex;align-items:center;gap:6px}.header h1 span{color:#1a6b4a}
+.btn-back{display:none;background:none;border:none;font-size:1.2em;cursor:pointer;padding:4px 8px;color:#1a6b4a;margin-right:4px}
+.auth-area{display:flex;align-items:center;gap:8px;font-size:.85em;position:relative}
+.auth-area img{width:32px;height:32px;border-radius:50%;cursor:pointer}
+.btn-google{display:inline-flex;align-items:center;gap:8px;padding:8px 16px 8px 12px;background:#fff;color:#3c4043;border:1px solid #dadce0;border-radius:20px;cursor:pointer;font-size:13px;font-weight:500;box-shadow:0 1px 2px rgba(60,64,67,.1)}
+.btn-google:active{background:#eee}
+.btn-google svg{flex-shrink:0;width:18px;height:18px}
+.btn-signout{padding:4px 10px;background:#e8f0ec;color:#5a7a6a;border:1px solid #c8d8cf;border-radius:6px;cursor:pointer;font-size:.8em;font-family:inherit}
+
+/* User menu */
+.user-menu{display:none;position:absolute;top:44px;right:0;background:#fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.12);padding:12px 16px;min-width:220px;z-index:100;border:1px solid #e0e8e4}
+.user-menu .user-menu-name{font-weight:600;font-size:.9em;margin-bottom:2px}
+.user-menu .user-menu-email{font-size:.75em;color:#5a7a6a;margin-bottom:10px;word-break:break-all}
+.user-menu hr{border:none;border-top:1px solid #e0e8e4;margin:8px 0}
+
+/* Cards */
+.card{background:#fff;border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 1px 4px rgba(26,46,36,.06)}
+.card h2{font-size:1.05em;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #1a6b4a;display:flex;align-items:center;gap:8px}
+
+/* Tabs */
+.tabs{display:flex;gap:0;margin-bottom:16px;background:#fff;border-radius:12px;padding:4px;box-shadow:0 1px 4px rgba(26,46,36,.06);overflow-x:auto}
+.tab{flex:1;padding:10px 6px;text-align:center;border:none;background:none;border-radius:8px;font-size:.82em;font-weight:600;font-family:inherit;cursor:pointer;color:#5a7a6a;transition:all .2s;white-space:nowrap;min-width:0}
+.tab.active{background:#1a6b4a;color:#fff}
+
+/* Destination bar */
+.dest-bar{display:flex;align-items:center;gap:10px;padding:12px 16px;background:#e8f0ec;border-radius:12px;margin-bottom:16px;font-size:.9em}
+.dest-bar .icon{font-size:1.3em}
+.dest-bar .label{color:#5a7a6a;font-size:.8em}
+.dest-bar .name{font-weight:600;color:#1a3a2a}
+.dest-bar .admin-badge{margin-left:auto;font-size:.7em;background:#1a6b4a;color:#fff;padding:2px 8px;border-radius:10px}
+
+/* Forms */
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:.8em;font-weight:600;color:#3a5a4a;margin-bottom:4px}
+.form-input{width:100%;padding:10px 14px;border:2px solid #d0ddd6;border-radius:10px;font-size:.95em;font-family:inherit;background:#fff;transition:border-color .2s}
+.form-input:focus{border-color:#1a6b4a;outline:none}
+select.form-input{appearance:auto}
+textarea.form-input{resize:vertical;min-height:80px}
+
+/* Buttons */
+.btn-primary{display:block;width:100%;padding:14px;border:none;border-radius:14px;font-size:1em;font-weight:700;font-family:inherit;color:#fff;background:linear-gradient(135deg,#1a6b4a,#0d4a30);cursor:pointer;box-shadow:0 2px 8px rgba(26,107,74,.25)}
+.btn-primary:active:not(:disabled){opacity:.85}
+.btn-primary:disabled{opacity:.4;cursor:not-allowed}
+.btn-secondary{display:inline-flex;align-items:center;gap:6px;padding:10px 18px;border:none;border-radius:10px;font-size:.9em;font-weight:600;font-family:inherit;background:#e8f0ec;color:#1a3a2a;cursor:pointer}
+.btn-secondary:active{background:#d0ddd6}
+.btn-icon{background:none;border:none;cursor:pointer;font-size:1em;padding:6px 8px;border-radius:8px;color:#5a7a6a;transition:background .15s}
+.btn-icon:hover{background:#e8f0ec}
+.btn-danger{background:#fde8e8;color:#c0392b;border:none;padding:6px 12px;border-radius:8px;font-size:.8em;font-weight:600;cursor:pointer;font-family:inherit}
+.btn-danger:active{background:#f5c6c6}
+.btn-text{background:none;border:none;color:#1a6b4a;font-size:.85em;font-weight:600;cursor:pointer;padding:4px 0;font-family:inherit}
+.btn-small{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border:none;border-radius:8px;font-size:.8em;font-weight:600;cursor:pointer;font-family:inherit;background:#1a6b4a;color:#fff}
+.btn-small:active{opacity:.85}
+
+/* Table */
+.data-table{width:100%;border-collapse:collapse;font-size:.85em}
+.data-table th{text-align:left;padding:10px 12px;background:#f0f5f2;color:#3a5a4a;font-weight:600;font-size:.8em;border-bottom:2px solid #d0ddd6;white-space:nowrap}
+.data-table td{padding:10px 12px;border-bottom:1px solid #e8f0ec;vertical-align:top}
+.data-table tr{cursor:pointer;transition:background .15s}
+.data-table tr:hover{background:#f5f9f7}
+.data-table .name-cell{font-weight:600;color:#1a3a2a}
+.data-table .sub{font-size:.8em;color:#5a7a6a;margin-top:2px}
+
+/* Status badges */
+.status-badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:.75em;font-weight:600;white-space:nowrap}
+.status-badge.lead{background:#e8f0ff;color:#2563eb}
+.status-badge.proposal{background:#fef3c7;color:#d97706}
+.status-badge.negotiation{background:#fde8e8;color:#dc2626}
+.status-badge.ordered{background:#d1fae5;color:#059669}
+.status-badge.delivered{background:#e0e8e4;color:#3a5a4a}
+.status-badge.invoiced{background:#f3e8ff;color:#7c3aed}
+.status-badge.paid{background:#1a6b4a;color:#fff}
+.status-badge.lost{background:#f1f1f1;color:#888}
+
+/* Pipeline */
+.pipeline{display:flex;gap:12px;overflow-x:auto;padding-bottom:12px;min-height:200px}
+.pipeline-col{min-width:220px;flex:1;background:#f0f5f2;border-radius:12px;padding:12px}
+.pipeline-col h3{font-size:.8em;color:#3a5a4a;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between}
+.pipeline-col h3 .count{background:#d0ddd6;padding:2px 8px;border-radius:10px;font-size:.85em}
+.pipeline-card{background:#fff;border-radius:10px;padding:12px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,.06);cursor:pointer;transition:transform .1s}
+.pipeline-card:active{transform:scale(.98)}
+.pipeline-card .deal-name{font-weight:600;font-size:.9em;margin-bottom:4px}
+.pipeline-card .deal-company{font-size:.8em;color:#5a7a6a;margin-bottom:6px}
+.pipeline-card .deal-amount{font-size:.9em;font-weight:700;color:#1a6b4a}
+
+/* Dashboard */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:20px}
+.stat-card{background:#fff;border-radius:14px;padding:16px;text-align:center;box-shadow:0 1px 4px rgba(26,46,36,.06)}
+.stat-card .stat-value{font-size:1.8em;font-weight:800;color:#1a6b4a}
+.stat-card .stat-label{font-size:.75em;color:#5a7a6a;margin-top:2px}
+.stat-card.accent{background:linear-gradient(135deg,#1a6b4a,#0d4a30);color:#fff}
+.stat-card.accent .stat-value{color:#fff}
+.stat-card.accent .stat-label{color:rgba(255,255,255,.7)}
+
+/* Activity list */
+.activity-list{display:flex;flex-direction:column;gap:8px}
+.activity-item{display:flex;gap:12px;padding:12px;background:#fff;border-radius:10px;border:1px solid #e0e8e4;font-size:.85em}
+.activity-item .activity-icon{font-size:1.2em;flex-shrink:0;margin-top:2px}
+.activity-item .activity-body{flex:1}
+.activity-item .activity-title{font-weight:600;color:#1a3a2a}
+.activity-item .activity-meta{font-size:.8em;color:#5a7a6a;margin-top:2px}
+
+/* Business card scan */
+.scan-area{border:2px dashed #c8d8cf;border-radius:16px;padding:40px 20px;text-align:center;cursor:pointer;background:#f5f9f7;transition:all .2s}
+.scan-area:hover,.scan-area.dragover{border-color:#1a6b4a;background:#e8f0ec}
+.scan-area .icon{font-size:2.5em;margin-bottom:8px}
+.scan-area .title{font-size:1em;font-weight:600;margin-bottom:4px}
+.scan-area .desc{font-size:.8em;color:#5a7a6a}
+
+/* Detail overlay */
+.detail-overlay{display:none;position:fixed;inset:0;background:rgba(26,46,36,.85);z-index:250;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.detail-overlay.active{display:block}
+.detail-panel{max-width:640px;margin:0 auto;padding:16px;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 24px)}
+.detail-close{position:sticky;top:12px;z-index:2;display:flex;justify-content:flex-end;margin-bottom:8px}
+.detail-close button{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.15);backdrop-filter:blur(8px);border:none;color:#fff;font-size:1.2em;cursor:pointer}
+.detail-content{background:#fff;border-radius:16px;padding:20px}
+.detail-content h2{font-size:1.1em;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #1a6b4a;display:flex;align-items:center;justify-content:space-between}
+.detail-actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+
+/* Empty state */
+.empty-state{text-align:center;padding:40px 20px;color:#5a7a6a}
+.empty-state .icon{font-size:2.5em;margin-bottom:8px}
+.empty-state .title{font-size:1em;font-weight:600;margin-bottom:4px}
+.empty-state .desc{font-size:.85em}
+
+/* Search */
+.search-bar{display:flex;gap:8px;margin-bottom:16px}
+.search-input{flex:1;padding:10px 14px;border:2px solid #d0ddd6;border-radius:12px;font-size:.95em;font-family:inherit;background:#fff}
+.search-input:focus{border-color:#1a6b4a;outline:none}
+
+/* Setup */
+.drive-list,.folder-list-setup{display:flex;flex-direction:column;gap:6px}
+.drive-item,.folder-item-setup{display:flex;align-items:center;gap:10px;padding:12px 14px;border:2px solid #d0ddd6;border-radius:12px;cursor:pointer}
+.drive-item:active,.folder-item-setup:active{transform:scale(.98)}
+.drive-item.selected,.folder-item-setup.selected{border-color:#1a6b4a;background:#e8f0ec}
+.drive-item .icon,.folder-item-setup .icon{font-size:1.2em}
+.drive-item .name,.folder-item-setup .name{font-size:.95em;font-weight:500;flex:1}
+
+/* Admin */
+.admin-panel{margin-bottom:16px}
+.admin-list{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.admin-item{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#fff;border:1px solid #e0e8e4;border-radius:10px;font-size:.85em}
+.admin-item .email{flex:1;color:#1a3a2a;font-weight:500}
+.admin-item .role{font-size:.75em;color:#5a7a6a}
+.admin-item .btn-remove{background:none;border:none;color:#c0392b;cursor:pointer;font-size:.8em;padding:4px 8px}
+.admin-add-row{display:flex;gap:8px}
+.admin-add-input{flex:1;padding:8px 12px;border:2px solid #d0ddd6;border-radius:10px;font-size:.85em;font-family:inherit}
+.admin-add-input:focus{border-color:#1a6b4a;outline:none}
+.admin-add-btn{padding:8px 14px;background:#1a6b4a;color:#fff;border:none;border-radius:10px;font-size:.85em;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
+
+/* Modal */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(26,46,36,.4);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);z-index:200;align-items:flex-end;justify-content:center}
+.modal-overlay.active{display:flex}
+.modal-sheet{background:#fff;border-radius:20px 20px 0 0;width:100%;max-width:600px;padding:20px;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 20px);animation:slideUp .3s ease;max-height:90vh;overflow-y:auto}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.modal-handle{width:36px;height:4px;background:#c8d8cf;border-radius:2px;margin:0 auto 16px}
+.modal-title{font-size:1.05em;font-weight:700;text-align:center;margin-bottom:16px}
+
+/* Footer */
+.footer-action{position:fixed;bottom:0;left:0;right:0;padding:12px 16px;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 12px);background:rgba(245,247,246,.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-top:1px solid #d0ddd6;z-index:100;display:none}
+.footer-action .container{display:flex;gap:8px;max-width:800px;margin:0 auto;padding:0}
+
+/* Loading & Toast */
+.loading-state{text-align:center;padding:48px 20px;color:#5a7a6a}
+.spinner{display:inline-block;width:24px;height:24px;border:3px solid #d0ddd6;border-top-color:#1a6b4a;border-radius:50%;animation:spin .7s linear infinite;margin-bottom:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toast{position:fixed;top:20px;left:50%;z-index:300;transform:translateX(-50%) translateY(-80px);background:#1a2e24;color:#fff;padding:10px 20px;border-radius:10px;font-size:.85em;transition:transform .3s ease;pointer-events:none;max-width:90%;text-align:center}
+.toast.show{transform:translateX(-50%) translateY(0)}
+
+/* Responsive table */
+@media(max-width:600px){
+  .data-table{font-size:.8em}
+  .data-table th,.data-table td{padding:8px 6px}
+  .hide-mobile{display:none}
+  .pipeline{flex-direction:column}
+  .pipeline-col{min-width:auto}
+  .stats-grid{grid-template-columns:repeat(2,1fr)}
+}
+
+.footer-info{text-align:center;padding:16px;font-size:.75em;color:#8a9e92}
+
+/* Scan result card */
+.scan-result{background:#e8f0ec;border-radius:12px;padding:16px;margin-top:16px}
+.scan-result h3{font-size:.9em;color:#1a6b4a;margin-bottom:10px}
+.scan-result .field{display:flex;gap:8px;margin-bottom:6px;font-size:.85em}
+.scan-result .field .label{color:#5a7a6a;min-width:60px;flex-shrink:0}
+.scan-result .field .value{color:#1a3a2a;font-weight:500}
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- Header -->
+  <div class="header">
+    <div style="display:flex;align-items:center">
+      <button class="btn-back" id="btn-back" onclick="goBack()">&#8592;</button>
+      <h1><span>Flow</span></h1>
+    </div>
+    <div class="auth-area">
+      <div id="auth-out">
+        <button class="btn-google" onclick="handleSignIn()">
+          <svg viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z"/><path fill="#FBBC05" d="M3.964 10.706A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.706V4.962H.957A8.997 8.997 0 0 0 0 9c0 1.452.348 2.827.957 4.038l3.007-2.332Z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.962L3.964 7.294C4.672 5.166 6.656 3.58 9 3.58Z"/></svg>
+          Googleでログイン
+        </button>
+      </div>
+      <div id="auth-in" style="display:none">
+        <span id="user-name" style="font-weight:500"></span>
+        <img id="user-avatar" src="" alt="" onclick="toggleUserMenu()" style="display:none">
+        <div class="user-menu" id="user-menu">
+          <div class="user-menu-name" id="user-menu-name"></div>
+          <div class="user-menu-email" id="user-menu-email"></div>
+          <hr>
+          <button class="btn-signout" onclick="handleSignOut()" style="width:100%">ログアウト</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Views -->
+  <!-- Welcome -->
+  <div id="view-welcome">
+    <div class="card" style="text-align:center;padding:48px 20px">
+      <div style="font-size:3em;margin-bottom:16px">&#128200;</div>
+      <h2 style="border:none;justify-content:center;font-size:1.2em;margin-bottom:8px">Choreia Flow</h2>
+      <p style="color:#5a7a6a;margin-bottom:24px;font-size:.9em">顧客管理・取引管理・名刺管理<br>Googleスプレッドシートで簡単に</p>
+      <button class="btn-google" onclick="handleSignIn()" style="margin:0 auto">
+        <svg viewBox="0 0 18 18" width="18" height="18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z"/><path fill="#FBBC05" d="M3.964 10.706A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.706V4.962H.957A8.997 8.997 0 0 0 0 9c0 1.452.348 2.827.957 4.038l3.007-2.332Z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.962L3.964 7.294C4.672 5.166 6.656 3.58 9 3.58Z"/></svg>
+        組織アカウントでログイン
+      </button>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div id="view-loading" style="display:none">
+    <div class="loading-state"><div class="spinner"></div><div>読み込み中...</div></div>
+  </div>
+
+  <!-- Setup -->
+  <div id="view-setup" style="display:none">
+    <div class="card">
+      <h2>初期設定</h2>
+      <p style="font-size:.9em;color:#5a7a6a;margin-bottom:16px"><strong id="setup-domain"></strong> の Choreia Flow を設定します。<br>データを保存する共有ドライブとフォルダを選択してください。</p>
+      <h3 style="font-size:.9em;margin-bottom:8px">1. 共有ドライブを選択</h3>
+      <div id="setup-drives"></div>
+      <div id="setup-step2" style="display:none;margin-top:16px">
+        <h3 style="font-size:.9em;margin-bottom:8px">2. フォルダを選択</h3>
+        <div id="setup-breadcrumb" class="browse-breadcrumb" style="margin-bottom:8px"></div>
+        <div id="setup-folders"></div>
+        <button class="btn-primary" id="setup-confirm-btn" onclick="confirmSetup()" disabled style="margin-top:16px">選択してください</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div id="view-main" style="display:none">
+    <div class="dest-bar">
+      <span class="icon">&#128202;</span>
+      <div>
+        <div class="label">データ保存先</div>
+        <div class="name" id="dest-name"></div>
+      </div>
+      <span class="admin-badge" id="admin-badge" style="display:none;cursor:pointer" onclick="toggleAdminPanel()">管理者</span>
+    </div>
+
+    <!-- Admin panel -->
+    <div class="card admin-panel" id="admin-panel" style="display:none">
+      <h2>管理者設定</h2>
+      <h3 style="font-size:.85em;margin-bottom:6px">管理者一覧</h3>
+      <div class="admin-list" id="admin-list"></div>
+      <div class="admin-add-row">
+        <input class="admin-add-input" id="admin-add-email" placeholder="メールアドレス">
+        <button class="admin-add-btn" onclick="addAdmin()">追加</button>
+      </div>
+      <hr style="border:none;border-top:1px solid #e0e8e4;margin:16px 0">
+      <h3 style="font-size:.85em;margin-bottom:6px">Gemini APIキー</h3>
+      <p style="font-size:.8em;color:#5a7a6a;margin-bottom:8px">名刺読み取りに使用します</p>
+      <div style="display:flex;gap:8px">
+        <input class="form-input" id="gemini-key-input" type="password" placeholder="APIキーを入力" style="flex:1">
+        <button class="btn-small" onclick="saveGeminiKey()">保存</button>
+      </div>
+      <div id="gemini-key-status" style="font-size:.8em;color:#5a7a6a;margin-top:4px"></div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" id="tab-dashboard" onclick="switchTab('dashboard')">ダッシュボード</button>
+      <button class="tab" id="tab-customers" onclick="switchTab('customers')">顧客</button>
+      <button class="tab" id="tab-deals" onclick="switchTab('deals')">案件</button>
+      <button class="tab" id="tab-activities" onclick="switchTab('activities')">活動</button>
+      <button class="tab" id="tab-cards" onclick="switchTab('cards')">名刺</button>
+    </div>
+
+    <!-- Dashboard panel -->
+    <div id="panel-dashboard">
+      <div class="stats-grid" id="dashboard-stats"></div>
+      <div class="card">
+        <h2>最近の活動</h2>
+        <div class="activity-list" id="dashboard-activities"></div>
+      </div>
+      <div class="card">
+        <h2>案件パイプライン</h2>
+        <div class="pipeline" id="dashboard-pipeline"></div>
+      </div>
+    </div>
+
+    <!-- Customers panel -->
+    <div id="panel-customers" style="display:none">
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+        <input class="search-input" id="customer-search" placeholder="顧客を検索..." oninput="filterCustomers()" style="flex:1">
+        <button class="btn-small" onclick="showCustomerForm()">+ 新規</button>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden;overflow-x:auto">
+        <table class="data-table" id="customer-table">
+          <thead><tr><th>会社名</th><th>担当者</th><th class="hide-mobile">TEL</th><th class="hide-mobile">メール</th><th>登録日</th></tr></thead>
+          <tbody id="customer-tbody"></tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="customer-empty" style="display:none">
+        <div class="icon">&#128101;</div>
+        <div class="title">顧客がまだありません</div>
+        <div class="desc">「+ 新規」ボタンから顧客を追加しましょう</div>
+      </div>
+    </div>
+
+    <!-- Deals panel -->
+    <div id="panel-deals" style="display:none">
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
+        <input class="search-input" id="deal-search" placeholder="案件を検索..." oninput="filterDeals()" style="flex:1;min-width:150px">
+        <button class="btn-small" onclick="showDealForm()">+ 新規</button>
+        <select class="form-input" id="deal-view-mode" onchange="renderDeals()" style="width:auto;padding:6px 10px;font-size:.8em">
+          <option value="table">リスト表示</option>
+          <option value="pipeline">パイプライン表示</option>
+        </select>
+      </div>
+      <div id="deals-table-view" class="card" style="padding:0;overflow:hidden;overflow-x:auto">
+        <table class="data-table" id="deal-table">
+          <thead><tr><th>案件名</th><th>顧客</th><th>ステータス</th><th>金額</th><th class="hide-mobile">担当</th><th class="hide-mobile">期限</th></tr></thead>
+          <tbody id="deal-tbody"></tbody>
+        </table>
+      </div>
+      <div id="deals-pipeline-view" style="display:none">
+        <div class="pipeline" id="deal-pipeline"></div>
+      </div>
+      <div class="empty-state" id="deal-empty" style="display:none">
+        <div class="icon">&#128188;</div>
+        <div class="title">案件がまだありません</div>
+        <div class="desc">「+ 新規」ボタンから案件を追加しましょう</div>
+      </div>
+    </div>
+
+    <!-- Activities panel -->
+    <div id="panel-activities" style="display:none">
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+        <select class="form-input" id="activity-filter" onchange="renderActivities()" style="width:auto;padding:6px 10px;font-size:.8em">
+          <option value="all">すべて</option>
+          <option value="visit">訪問</option>
+          <option value="call">電話</option>
+          <option value="email">メール</option>
+          <option value="meeting">打合せ</option>
+          <option value="other">その他</option>
+        </select>
+        <div style="flex:1"></div>
+        <button class="btn-small" onclick="showActivityForm()">+ 記録</button>
+      </div>
+      <div class="activity-list" id="activity-list"></div>
+      <div class="empty-state" id="activity-empty" style="display:none">
+        <div class="icon">&#128221;</div>
+        <div class="title">活動記録がありません</div>
+        <div class="desc">「+ 記録」ボタンから活動を記録しましょう</div>
+      </div>
+    </div>
+
+    <!-- Cards (Business card) panel -->
+    <div id="panel-cards" style="display:none">
+      <div class="card">
+        <h2>名刺スキャン</h2>
+        <p style="font-size:.85em;color:#5a7a6a;margin-bottom:12px">名刺の写真を撮影またはアップロードすると、AIが自動で読み取ります</p>
+        <div class="scan-area" id="scan-area" onclick="document.getElementById('card-file').click()">
+          <div class="icon">&#128247;</div>
+          <div class="title">名刺をスキャン</div>
+          <div class="desc">タップして撮影 or 画像を選択</div>
+        </div>
+        <input type="file" id="card-file" accept="image/*" capture="environment" onchange="handleCardScan(this.files)" style="display:none">
+        <div id="scan-preview" style="display:none;margin-top:16px">
+          <img id="scan-preview-img" style="width:100%;border-radius:10px;margin-bottom:12px" alt="">
+          <div class="loading-state" id="scan-loading"><div class="spinner"></div><div>AIが名刺を読み取り中...</div></div>
+          <div id="scan-result" class="scan-result" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Detail overlay -->
+<div class="detail-overlay" id="detail-overlay">
+  <div class="detail-panel">
+    <div class="detail-close"><button onclick="closeDetail()">&#10005;</button></div>
+    <div class="detail-content" id="detail-content"></div>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="modal-title"></div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script>
+// ==================== Config ====================
+var CLIENT_ID='595564106580-hsrunbvfacmr23d2jopl462taqilip75.apps.googleusercontent.com';
+var SCOPES='https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets';
+var GEMINI_API_KEY='';
+var CONFIG_FILENAME='choreia-flow-config.json';
+var BLOCKED_DOMAINS=['gmail.com','googlemail.com','yahoo.co.jp','yahoo.com','hotmail.com','outlook.com','outlook.jp','icloud.com','me.com','mac.com','aol.com','protonmail.com','zoho.com','live.com','live.jp','msn.com','nifty.com','biglobe.ne.jp','ocn.ne.jp'];
+
+// ==================== State ====================
+var tokenClient=null,accessToken=null;
+var currentUser={email:'',name:'',domain:'',photo:''};
+var orgConfig=null;
+// Data arrays (from Sheets)
+var customers=[],deals=[],activities=[];
+var setupDriveId='',setupDriveName='',setupFolderId='',setupFolderName='';
+var setupFolderPath=[];
+
+// Deal statuses
+var DEAL_STATUSES=[
+  {key:'lead',label:'リード',color:'#2563eb'},
+  {key:'proposal',label:'提案中',color:'#d97706'},
+  {key:'negotiation',label:'交渉中',color:'#dc2626'},
+  {key:'ordered',label:'受注',color:'#059669'},
+  {key:'delivered',label:'納品済',color:'#3a5a4a'},
+  {key:'invoiced',label:'請求済',color:'#7c3aed'},
+  {key:'paid',label:'入金済',color:'#1a6b4a'},
+  {key:'lost',label:'失注',color:'#888'}
+];
+var ACTIVITY_TYPES=[
+  {key:'visit',label:'訪問',icon:'\u{1F6B6}'},
+  {key:'call',label:'電話',icon:'\u{1F4DE}'},
+  {key:'email',label:'メール',icon:'\u{2709}'},
+  {key:'meeting',label:'打合せ',icon:'\u{1F91D}'},
+  {key:'other',label:'その他',icon:'\u{1F4DD}'}
+];
+
+// ==================== Utility ====================
+function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function escapeAttr(s){return String(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function showToast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show')},3000);}
+function formatDate(d){if(!d)return '';try{var dt=new Date(d);if(isNaN(dt))return d;return dt.getFullYear()+'/'+(dt.getMonth()+1)+'/'+dt.getDate();}catch(e){return d;}}
+function formatCurrency(n){if(!n&&n!==0)return '';return Number(n).toLocaleString('ja-JP')+'円';}
+function generateId(){return Date.now().toString(36)+Math.random().toString(36).substr(2,5);}
+function todayStr(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+
+async function apiFetch(url,opts){
+  opts=opts||{};
+  opts.headers=opts.headers||{};
+  opts.headers['Authorization']='Bearer '+accessToken;
+  var r=await fetch(url,opts);
+  if(!r.ok){var txt='';try{txt=JSON.stringify(await r.json())}catch(e){}throw new Error('API '+r.status+' '+txt);}
+  return r.json();
+}
+
+// ==================== Auth ====================
+function initGIS(){
+  tokenClient=google.accounts.oauth2.initTokenClient({client_id:CLIENT_ID,scope:SCOPES,callback:onTokenResponse});
+  var saved=sessionStorage.getItem('choreia_flow_token');
+  if(saved){accessToken=saved;restoreSession();}
+}
+async function restoreSession(){
+  showView('loading');
+  try{
+    var about=await apiFetch('https://www.googleapis.com/drive/v3/about?fields=user');
+    setUser(about.user);
+    if(isBlockedDomain(currentUser.domain)){accessToken=null;sessionStorage.removeItem('choreia_flow_token');showView('welcome');return;}
+    showLoggedIn();await findConfig();
+  }catch(e){accessToken=null;sessionStorage.removeItem('choreia_flow_token');showView('welcome');}
+}
+async function onTokenResponse(resp){
+  if(resp.error){showToast('ログインに失敗しました');return;}
+  accessToken=resp.access_token;sessionStorage.setItem('choreia_flow_token',accessToken);
+  showView('loading');
+  try{
+    var about=await apiFetch('https://www.googleapis.com/drive/v3/about?fields=user');
+    setUser(about.user);
+    if(isBlockedDomain(currentUser.domain)){showToast('組織アカウントでログインしてください');handleSignOut();return;}
+    showLoggedIn();await findConfig();
+  }catch(e){showToast('ログインに問題がありました');showView('welcome');}
+}
+function isBlockedDomain(d){return BLOCKED_DOMAINS.indexOf(d)!==-1;}
+function setUser(u){currentUser.email=u.emailAddress||'';currentUser.name=u.displayName||currentUser.email;currentUser.domain=currentUser.email.split('@')[1]||'';currentUser.photo=u.photoLink||'';}
+function showLoggedIn(){
+  document.getElementById('user-name').textContent=currentUser.name;
+  var av=document.getElementById('user-avatar');
+  if(currentUser.photo){av.src=currentUser.photo;av.style.display='';av.title=currentUser.name;}else{av.style.display='none';}
+  document.getElementById('auth-out').style.display='none';document.getElementById('auth-in').style.display='flex';
+}
+function toggleUserMenu(){var m=document.getElementById('user-menu');var show=m.style.display==='none';m.style.display=show?'':'none';if(show){document.getElementById('user-menu-name').textContent=currentUser.name;document.getElementById('user-menu-email').textContent=currentUser.email;}}
+function handleSignIn(){if(!tokenClient){showToast('準備中');return;}tokenClient.requestAccessToken({prompt:'consent'});}
+function handleSignOut(){
+  if(accessToken)google.accounts.oauth2.revoke(accessToken);
+  accessToken=null;sessionStorage.removeItem('choreia_flow_token');
+  orgConfig=null;customers=[];deals=[];activities=[];
+  document.getElementById('auth-out').style.display='';document.getElementById('auth-in').style.display='none';
+  showView('welcome');
+}
+
+// ==================== Views ====================
+var currentView='welcome';
+var currentTab='dashboard';
+
+function showView(name){
+  currentView=name;
+  ['welcome','loading','setup','main'].forEach(function(v){var el=document.getElementById('view-'+v);if(el)el.style.display=(v===name)?'':'none';});
+  updateBackBtn();
+}
+function switchTab(tab){
+  currentTab=tab;
+  ['dashboard','customers','deals','activities','cards'].forEach(function(t){
+    var tabEl=document.getElementById('tab-'+t);
+    var panelEl=document.getElementById('panel-'+t);
+    if(tabEl)tabEl.classList.toggle('active',tab===t);
+    if(panelEl)panelEl.style.display=tab===t?'':'none';
+  });
+  if(tab==='dashboard')renderDashboard();
+  if(tab==='customers')renderCustomers();
+  if(tab==='deals')renderDeals();
+  if(tab==='activities')renderActivities();
+  updateBackBtn();
+}
+function updateBackBtn(){
+  var show=(currentView==='setup')||(currentView==='main'&&currentTab!=='dashboard');
+  document.getElementById('btn-back').style.display=show?'inline-block':'none';
+}
+function goBack(){
+  if(currentView==='setup'){showMainView();return;}
+  if(currentView==='main'&&currentTab!=='dashboard'){switchTab('dashboard');return;}
+}
+
+// ==================== Config ====================
+async function findConfig(){
+  try{
+    var data=await apiFetch('https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent("name='"+CONFIG_FILENAME+"' and trashed=false")+'&corpora=allDrives&includeItemsFromAllDrives=true&supportsAllDrives=true&fields=files(id)');
+    for(var i=0;i<(data.files||[]).length;i++){
+      try{var c=await apiFetch('https://www.googleapis.com/drive/v3/files/'+data.files[i].id+'?alt=media&supportsAllDrives=true');
+        if(c.domain===currentUser.domain){orgConfig=c;orgConfig.configFileId=data.files[i].id;await loadAllData();showMainView();return;}
+      }catch(e){}
+    }
+  }catch(e){}
+  showSetup();
+}
+async function saveConfig(){
+  try{
+    var cfg=Object.assign({},orgConfig);delete cfg.configFileId;
+    var r=await fetch('https://www.googleapis.com/upload/drive/v3/files/'+orgConfig.configFileId+'?uploadType=media&supportsAllDrives=true',{
+      method:'PATCH',headers:{'Authorization':'Bearer '+accessToken,'Content-Type':'application/json'},body:JSON.stringify(cfg,null,2)
+    });
+    if(!r.ok)throw new Error('Save failed');
+  }catch(e){showToast('設定の保存に失敗しました');console.error(e);}
+}
+
+// ==================== Setup ====================
+function showSetup(){showView('setup');document.getElementById('setup-domain').textContent=currentUser.domain;document.getElementById('setup-step2').style.display='none';loadSharedDrives();}
+async function loadSharedDrives(){
+  var c=document.getElementById('setup-drives');c.innerHTML='<div class="loading-state" style="padding:24px"><div class="spinner"></div><div>読み込み中...</div></div>';
+  try{var d=await apiFetch('https://www.googleapis.com/drive/v3/drives?pageSize=100');var dr=d.drives||[];
+    if(!dr.length){c.innerHTML='<p style="color:#5a7a6a">共有ドライブがありません</p>';return;}
+    var h='<div class="drive-list">';for(var i=0;i<dr.length;i++)h+='<div class="drive-item" data-id="'+dr[i].id+'" data-name="'+escapeAttr(dr[i].name)+'" onclick="selectDrive(this)"><span class="icon">&#128190;</span><span class="name">'+escapeHtml(dr[i].name)+'</span></div>';
+    c.innerHTML=h+'</div>';
+  }catch(e){c.innerHTML='<p style="color:#5a7a6a">読み込めませんでした</p>';}
+}
+function selectDrive(el){document.querySelectorAll('.drive-item').forEach(function(x){x.classList.remove('selected')});el.classList.add('selected');setupDriveId=el.getAttribute('data-id');setupDriveName=el.getAttribute('data-name');setupFolderId=setupDriveId;setupFolderName=setupDriveName;setupFolderPath=[{id:setupDriveId,name:setupDriveName}];document.getElementById('setup-step2').style.display='';loadSetupFolders(setupDriveId);updateSetupBtn();}
+async function loadSetupFolders(pid){
+  var c=document.getElementById('setup-folders');c.innerHTML='<div class="loading-state" style="padding:24px"><div class="spinner"></div></div>';updateSetupBreadcrumb();
+  try{var d=await apiFetch('https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent("'"+pid+"' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false")+'&driveId='+setupDriveId+'&corpora=drive&includeItemsFromAllDrives=true&supportsAllDrives=true&fields=files(id,name)&orderBy=name&pageSize=100');
+    var f=d.files||[];if(!f.length){c.innerHTML='<p style="color:#5a7a6a;font-size:.85em;padding:12px">サブフォルダなし — このフォルダを選択できます</p>';return;}
+    var h='<div class="folder-list-setup">';for(var i=0;i<f.length;i++)h+='<div class="folder-item-setup" data-id="'+f[i].id+'" data-name="'+escapeAttr(f[i].name)+'" onclick="selectSetupFolder(this)"><span class="icon">&#128193;</span><span class="name">'+escapeHtml(f[i].name)+'</span><span style="color:#8a9e92;cursor:pointer" onclick="event.stopPropagation();openSetupFolder(\''+f[i].id+'\',\''+escapeAttr(f[i].name)+'\')">&#9654;</span></div>';
+    c.innerHTML=h+'</div>';
+  }catch(e){c.innerHTML='<p style="color:#5a7a6a">読み込めませんでした</p>';}
+}
+function selectSetupFolder(el){document.querySelectorAll('.folder-item-setup').forEach(function(x){x.classList.remove('selected')});el.classList.add('selected');setupFolderId=el.getAttribute('data-id');setupFolderName=el.getAttribute('data-name');updateSetupBtn();}
+function openSetupFolder(id,name){setupFolderPath.push({id:id,name:name});setupFolderId=id;setupFolderName=name;loadSetupFolders(id);updateSetupBtn();}
+function navigateSetupTo(i){setupFolderPath=setupFolderPath.slice(0,i+1);var t=setupFolderPath[i];setupFolderId=t.id;setupFolderName=t.name;loadSetupFolders(t.id);updateSetupBtn();}
+function updateSetupBreadcrumb(){var el=document.getElementById('setup-breadcrumb'),h='';for(var i=0;i<setupFolderPath.length;i++){if(i>0)h+=' / ';if(i<setupFolderPath.length-1)h+='<a onclick="navigateSetupTo('+i+')" style="color:#1a6b4a;cursor:pointer">'+escapeHtml(setupFolderPath[i].name)+'</a>';else h+='<strong>'+escapeHtml(setupFolderPath[i].name)+'</strong>';}el.innerHTML=h;}
+function updateSetupBtn(){var b=document.getElementById('setup-confirm-btn');b.disabled=!setupFolderId;b.textContent=setupFolderName?'\u300C'+setupFolderName+'\u300D\u306B\u6C7A\u5B9A':'選択してください';}
+
+async function confirmSetup(){
+  var b=document.getElementById('setup-confirm-btn');b.disabled=true;b.textContent='設定中...';
+  try{
+    // Create spreadsheet
+    var ssBody={properties:{title:'Choreia Flow - '+currentUser.domain},sheets:[
+      {properties:{title:'顧客',gridProperties:{frozenRowCount:1}}},
+      {properties:{title:'案件',gridProperties:{frozenRowCount:1}}},
+      {properties:{title:'活動',gridProperties:{frozenRowCount:1}}}
+    ]};
+    var ss=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ssBody)});
+    var ssId=ss.spreadsheetId;
+
+    // Move spreadsheet to the selected folder
+    var fileInfo=await apiFetch('https://www.googleapis.com/drive/v3/files/'+ssId+'?fields=parents&supportsAllDrives=true');
+    var prevParents=(fileInfo.parents||[]).join(',');
+    await fetch('https://www.googleapis.com/drive/v3/files/'+ssId+'?addParents='+setupFolderId+'&removeParents='+prevParents+'&supportsAllDrives=true',{
+      method:'PATCH',headers:{'Authorization':'Bearer '+accessToken,'Content-Type':'application/json'},body:'{}'
+    });
+
+    // Write headers
+    var headers=[
+      {range:'顧客!A1:J1',values:[['ID','会社名','担当者','部署','役職','TEL','メール','住所','メモ','登録日']]},
+      {range:'案件!A1:K1',values:[['ID','顧客ID','会社名','案件名','ステータス','金額','担当者','開始日','期限','メモ','更新日']]},
+      {range:'活動!A1:H1',values:[['ID','顧客ID','会社名','案件ID','種別','内容','担当者','日時']]}
+    ];
+    await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+ssId+'/values:batchUpdate',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({valueInputOption:'RAW',data:headers})
+    });
+
+    // Save config
+    var cfg={domain:currentUser.domain,admin:currentUser.email,admins:[currentUser.email],adminName:currentUser.name,folderId:setupFolderId,folderName:setupFolderName,driveId:setupDriveId,driveName:setupDriveName,spreadsheetId:ssId,createdAt:new Date().toISOString()};
+    var m=JSON.stringify({name:CONFIG_FILENAME,parents:[setupFolderId],mimeType:'application/json'});
+    var f=new FormData();f.append('metadata',new Blob([m],{type:'application/json'}));f.append('file',new Blob([JSON.stringify(cfg,null,2)],{type:'application/json'}));
+    var r=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true',{method:'POST',headers:{'Authorization':'Bearer '+accessToken},body:f});
+    if(!r.ok)throw new Error('Config save failed');
+    var fl=await r.json();
+    orgConfig=cfg;orgConfig.configFileId=fl.id;
+    showToast('設定完了！');showMainView();
+  }catch(e){showToast('設定に失敗しました: '+e.message);b.disabled=false;b.textContent='\u300C'+setupFolderName+'\u300D\u306B\u6C7A\u5B9A';console.error(e);}
+}
+
+// ==================== Main ====================
+function showMainView(){
+  showView('main');
+  document.getElementById('dest-name').textContent=orgConfig.driveName+' / '+orgConfig.folderName;
+  var admin=isAdmin();
+  document.getElementById('admin-badge').style.display=admin?'':'none';
+  document.getElementById('admin-panel').style.display='none';
+  GEMINI_API_KEY=orgConfig.geminiApiKey||'';
+  switchTab('dashboard');
+}
+function isAdmin(){if(!orgConfig)return false;var admins=orgConfig.admins||[orgConfig.admin];return admins.indexOf(currentUser.email)!==-1;}
+function getAdmins(){if(!orgConfig)return[];return orgConfig.admins||[orgConfig.admin];}
+function toggleAdminPanel(){
+  var p=document.getElementById('admin-panel');var visible=p.style.display!=='none';
+  p.style.display=visible?'none':'';
+  if(!visible){renderAdminList();loadGeminiKey();}
+}
+function renderAdminList(){
+  var admins=getAdmins();var h='';
+  for(var i=0;i<admins.length;i++){
+    h+='<div class="admin-item"><span class="email">'+escapeHtml(admins[i])+'</span>';
+    if(admins[i]===orgConfig.admin||admins[i]===(orgConfig.admins&&orgConfig.admins[0]))h+='<span class="role">オーナー</span>';
+    else h+='<button class="btn-remove" onclick="removeAdmin(\''+escapeAttr(admins[i])+'\')">削除</button>';
+    h+='</div>';
+  }
+  document.getElementById('admin-list').innerHTML=h;
+}
+async function addAdmin(){
+  var input=document.getElementById('admin-add-email');var email=input.value.trim().toLowerCase();
+  if(!email||email.indexOf('@')===-1){showToast('有効なメールアドレスを入力');return;}
+  var admins=getAdmins();if(admins.indexOf(email)!==-1){showToast('既に管理者です');return;}
+  admins.push(email);orgConfig.admins=admins;input.value='';renderAdminList();await saveConfig();showToast(email+' を追加しました');
+}
+async function removeAdmin(email){
+  var admins=getAdmins().filter(function(a){return a!==email});
+  if(!admins.length){showToast('管理者は最低1人必要');return;}
+  orgConfig.admins=admins;renderAdminList();await saveConfig();showToast(email+' を削除しました');
+}
+function loadGeminiKey(){
+  var input=document.getElementById('gemini-key-input');
+  var status=document.getElementById('gemini-key-status');
+  input.value=orgConfig.geminiApiKey||'';
+  status.textContent=orgConfig.geminiApiKey?'設定済み':'未設定';
+}
+async function saveGeminiKey(){
+  var key=document.getElementById('gemini-key-input').value.trim();
+  orgConfig.geminiApiKey=key;GEMINI_API_KEY=key;await saveConfig();
+  document.getElementById('gemini-key-status').textContent=key?'保存しました':'削除しました';
+  showToast('APIキーを保存しました');
+}
+
+// ==================== Sheets CRUD ====================
+var SHEET_ID='';
+function getSheetId(){return orgConfig?orgConfig.spreadsheetId:'';}
+
+async function loadAllData(){
+  SHEET_ID=getSheetId();if(!SHEET_ID)return;
+  try{
+    var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values:batchGet?ranges='+encodeURIComponent('顧客!A2:J1000')+'&ranges='+encodeURIComponent('案件!A2:K1000')+'&ranges='+encodeURIComponent('活動!A2:H1000'));
+    var ranges=data.valueRanges||[];
+    customers=parseRows(ranges[0]&&ranges[0].values||[],['id','company','contact','department','title','tel','email','address','memo','createdAt']);
+    deals=parseRows(ranges[1]&&ranges[1].values||[],['id','customerId','company','name','status','amount','assignee','startDate','deadline','memo','updatedAt']);
+    activities=parseRows(ranges[2]&&ranges[2].values||[],['id','customerId','company','dealId','type','content','assignee','datetime']);
+    // Parse amounts as numbers
+    deals.forEach(function(d){d.amount=d.amount?Number(d.amount):0;});
+  }catch(e){console.error('loadAllData error:',e);showToast('データの読み込みに失敗しました');}
+}
+function parseRows(rows,fields){
+  return rows.map(function(row){
+    var obj={};
+    fields.forEach(function(f,i){obj[f]=row[i]||'';});
+    return obj;
+  });
+}
+function toRow(obj,fields){return fields.map(function(f){return obj[f]===undefined?'':String(obj[f]);});}
+
+async function appendRow(sheet,obj,fields){
+  SHEET_ID=getSheetId();
+  await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values/'+encodeURIComponent(sheet+'!A:Z')+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({values:[toRow(obj,fields)]})
+  });
+}
+
+async function updateRow(sheet,rowIndex,obj,fields){
+  SHEET_ID=getSheetId();
+  var range=sheet+'!A'+(rowIndex+2)+':'+String.fromCharCode(64+fields.length)+(rowIndex+2);
+  await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values/'+encodeURIComponent(range)+'?valueInputOption=RAW',{
+    method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({values:[toRow(obj,fields)]})
+  });
+}
+
+async function deleteRow(sheet,rowIndex){
+  SHEET_ID=getSheetId();
+  // Get sheet gid
+  var meta=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'?fields=sheets.properties');
+  var sheetId=0;
+  (meta.sheets||[]).forEach(function(s){if(s.properties.title===sheet)sheetId=s.properties.sheetId;});
+  await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+':batchUpdate',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({requests:[{deleteDimension:{range:{sheetId:sheetId,dimension:'ROWS',startIndex:rowIndex+1,endIndex:rowIndex+2}}}]})
+  });
+}
+
+// ==================== Customers ====================
+var CUSTOMER_FIELDS=['id','company','contact','department','title','tel','email','address','memo','createdAt'];
+
+function renderCustomers(){
+  var tbody=document.getElementById('customer-tbody');
+  var q=(document.getElementById('customer-search').value||'').toLowerCase();
+  var filtered=customers.filter(function(c){
+    if(!q)return true;
+    return (c.company+c.contact+c.tel+c.email).toLowerCase().indexOf(q)!==-1;
+  });
+  if(!filtered.length){
+    document.getElementById('customer-table').parentElement.style.display='none';
+    document.getElementById('customer-empty').style.display='';
+    return;
+  }
+  document.getElementById('customer-table').parentElement.style.display='';
+  document.getElementById('customer-empty').style.display='none';
+  var h='';
+  filtered.forEach(function(c){
+    h+='<tr onclick="showCustomerDetail(\''+escapeAttr(c.id)+'\')">';
+    h+='<td class="name-cell">'+escapeHtml(c.company)+'</td>';
+    h+='<td>'+escapeHtml(c.contact)+'<div class="sub">'+escapeHtml(c.department+(c.title?' '+c.title:''))+'</div></td>';
+    h+='<td class="hide-mobile">'+escapeHtml(c.tel)+'</td>';
+    h+='<td class="hide-mobile">'+escapeHtml(c.email)+'</td>';
+    h+='<td>'+formatDate(c.createdAt)+'</td>';
+    h+='</tr>';
+  });
+  tbody.innerHTML=h;
+}
+function filterCustomers(){renderCustomers();}
+
+function showCustomerForm(editId){
+  var c=editId?customers.find(function(x){return x.id===editId;}):null;
+  document.getElementById('modal-title').textContent=c?'顧客を編集':'新規顧客';
+  var h='<form onsubmit="saveCustomer(event,\''+(editId||'')+'\');return false">';
+  h+='<div class="form-group"><label>会社名 *</label><input class="form-input" id="f-company" required value="'+escapeAttr(c?c.company:'')+'"></div>';
+  h+='<div class="form-group"><label>担当者名</label><input class="form-input" id="f-contact" value="'+escapeAttr(c?c.contact:'')+'"></div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+='<div class="form-group"><label>部署</label><input class="form-input" id="f-department" value="'+escapeAttr(c?c.department:'')+'"></div>';
+  h+='<div class="form-group"><label>役職</label><input class="form-input" id="f-title" value="'+escapeAttr(c?c.title:'')+'"></div></div>';
+  h+='<div class="form-group"><label>TEL</label><input class="form-input" id="f-tel" type="tel" value="'+escapeAttr(c?c.tel:'')+'"></div>';
+  h+='<div class="form-group"><label>メール</label><input class="form-input" id="f-email" type="email" value="'+escapeAttr(c?c.email:'')+'"></div>';
+  h+='<div class="form-group"><label>住所</label><input class="form-input" id="f-address" value="'+escapeAttr(c?c.address:'')+'"></div>';
+  h+='<div class="form-group"><label>メモ</label><textarea class="form-input" id="f-memo">'+escapeHtml(c?c.memo:'')+'</textarea></div>';
+  h+='<button class="btn-primary" type="submit">'+(c?'更新':'登録')+'</button></form>';
+  document.getElementById('modal-body').innerHTML=h;
+  openModal();
+}
+
+async function saveCustomer(e,editId){
+  e.preventDefault();
+  var obj={
+    id:editId||generateId(),
+    company:document.getElementById('f-company').value.trim(),
+    contact:document.getElementById('f-contact').value.trim(),
+    department:document.getElementById('f-department').value.trim(),
+    title:document.getElementById('f-title').value.trim(),
+    tel:document.getElementById('f-tel').value.trim(),
+    email:document.getElementById('f-email').value.trim(),
+    address:document.getElementById('f-address').value.trim(),
+    memo:document.getElementById('f-memo').value.trim(),
+    createdAt:editId?(customers.find(function(x){return x.id===editId})||{}).createdAt||todayStr():todayStr()
+  };
+  try{
+    if(editId){
+      var idx=customers.findIndex(function(x){return x.id===editId});
+      if(idx>=0){customers[idx]=obj;await updateRow('顧客',idx,obj,CUSTOMER_FIELDS);}
+    }else{
+      customers.push(obj);await appendRow('顧客',obj,CUSTOMER_FIELDS);
+    }
+    closeModal();renderCustomers();showToast(editId?'更新しました':'登録しました');
+  }catch(e){showToast('保存に失敗しました');console.error(e);}
+}
+
+function showCustomerDetail(id){
+  var c=customers.find(function(x){return x.id===id});if(!c)return;
+  var relatedDeals=deals.filter(function(d){return d.customerId===id});
+  var relatedActivities=activities.filter(function(a){return a.customerId===id});
+  var h='<h2>'+escapeHtml(c.company)+'<div><button class="btn-icon" onclick="closeDetail();showCustomerForm(\''+escapeAttr(id)+'\')">&#9998;</button><button class="btn-icon btn-danger" onclick="deleteCustomer(\''+escapeAttr(id)+'\')">&#128465;</button></div></h2>';
+  h+='<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.9em;margin-bottom:16px">';
+  if(c.contact)h+='<span style="color:#5a7a6a">担当者</span><span>'+escapeHtml(c.contact)+' '+escapeHtml(c.department?c.department+' ':'')+escapeHtml(c.title||'')+'</span>';
+  if(c.tel)h+='<span style="color:#5a7a6a">TEL</span><span><a href="tel:'+escapeAttr(c.tel)+'" style="color:#1a6b4a">'+escapeHtml(c.tel)+'</a></span>';
+  if(c.email)h+='<span style="color:#5a7a6a">メール</span><span><a href="mailto:'+escapeAttr(c.email)+'" style="color:#1a6b4a">'+escapeHtml(c.email)+'</a></span>';
+  if(c.address)h+='<span style="color:#5a7a6a">住所</span><span>'+escapeHtml(c.address)+'</span>';
+  if(c.memo)h+='<span style="color:#5a7a6a">メモ</span><span>'+escapeHtml(c.memo)+'</span>';
+  h+='<span style="color:#5a7a6a">登録日</span><span>'+formatDate(c.createdAt)+'</span>';
+  h+='</div>';
+
+  // Related deals
+  h+='<h3 style="font-size:.9em;color:#1a6b4a;margin:16px 0 8px">関連案件 ('+relatedDeals.length+')</h3>';
+  if(relatedDeals.length){
+    relatedDeals.forEach(function(d){
+      h+='<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f5f9f7;border-radius:8px;margin-bottom:6px;cursor:pointer" onclick="closeDetail();setTimeout(function(){showDealDetail(\''+escapeAttr(d.id)+'\')},100)">';
+      h+='<span class="status-badge '+d.status+'">'+getStatusLabel(d.status)+'</span>';
+      h+='<span style="font-weight:600;font-size:.85em;flex:1">'+escapeHtml(d.name)+'</span>';
+      h+='<span style="font-size:.85em;font-weight:700;color:#1a6b4a">'+formatCurrency(d.amount)+'</span></div>';
+    });
+  }else{h+='<p style="font-size:.85em;color:#5a7a6a">なし</p>';}
+
+  // Related activities
+  h+='<h3 style="font-size:.9em;color:#1a6b4a;margin:16px 0 8px">活動履歴 ('+relatedActivities.length+')</h3>';
+  if(relatedActivities.length){
+    relatedActivities.slice(0,5).forEach(function(a){
+      var at=ACTIVITY_TYPES.find(function(t){return t.key===a.type})||{icon:'',label:a.type};
+      h+='<div style="display:flex;gap:8px;padding:8px 12px;background:#f5f9f7;border-radius:8px;margin-bottom:6px;font-size:.85em">';
+      h+='<span>'+at.icon+'</span><div><div style="font-weight:600">'+escapeHtml(a.content.substring(0,50))+'</div><div style="color:#5a7a6a;font-size:.8em">'+formatDate(a.datetime)+' '+escapeHtml(a.assignee)+'</div></div></div>';
+    });
+  }else{h+='<p style="font-size:.85em;color:#5a7a6a">なし</p>';}
+
+  h+='<div class="detail-actions">';
+  h+='<button class="btn-secondary" onclick="closeDetail();showDealForm(null,\''+escapeAttr(id)+'\')">+ 案件追加</button>';
+  h+='<button class="btn-secondary" onclick="closeDetail();showActivityForm(\''+escapeAttr(id)+'\')">+ 活動記録</button>';
+  h+='</div>';
+
+  document.getElementById('detail-content').innerHTML=h;
+  document.getElementById('detail-overlay').classList.add('active');
+}
+
+async function deleteCustomer(id){
+  if(!confirm('この顧客を削除しますか？'))return;
+  var idx=customers.findIndex(function(x){return x.id===id});
+  if(idx<0)return;
+  try{await deleteRow('顧客',idx);customers.splice(idx,1);closeDetail();renderCustomers();showToast('削除しました');}
+  catch(e){showToast('削除に失敗しました');console.error(e);}
+}
+
+// ==================== Deals ====================
+var DEAL_FIELDS=['id','customerId','company','name','status','amount','assignee','startDate','deadline','memo','updatedAt'];
+
+function getStatusLabel(key){var s=DEAL_STATUSES.find(function(x){return x.key===key});return s?s.label:key;}
+
+function renderDeals(){
+  var mode=document.getElementById('deal-view-mode').value;
+  var q=(document.getElementById('deal-search').value||'').toLowerCase();
+  var filtered=deals.filter(function(d){
+    if(!q)return true;
+    return (d.name+d.company+d.assignee+d.status).toLowerCase().indexOf(q)!==-1;
+  });
+
+  if(mode==='pipeline'){
+    document.getElementById('deals-table-view').style.display='none';
+    document.getElementById('deals-pipeline-view').style.display='';
+    renderDealPipeline(filtered,'deal-pipeline');
+  }else{
+    document.getElementById('deals-table-view').style.display='';
+    document.getElementById('deals-pipeline-view').style.display='none';
+    renderDealTable(filtered);
+  }
+  document.getElementById('deal-empty').style.display=filtered.length?'none':'';
+}
+function filterDeals(){renderDeals();}
+
+function renderDealTable(list){
+  var h='';
+  list.forEach(function(d){
+    h+='<tr onclick="showDealDetail(\''+escapeAttr(d.id)+'\')">';
+    h+='<td class="name-cell">'+escapeHtml(d.name)+'</td>';
+    h+='<td>'+escapeHtml(d.company)+'</td>';
+    h+='<td><span class="status-badge '+d.status+'">'+getStatusLabel(d.status)+'</span></td>';
+    h+='<td style="font-weight:700">'+formatCurrency(d.amount)+'</td>';
+    h+='<td class="hide-mobile">'+escapeHtml(d.assignee)+'</td>';
+    h+='<td class="hide-mobile">'+formatDate(d.deadline)+'</td>';
+    h+='</tr>';
+  });
+  document.getElementById('deal-tbody').innerHTML=h;
+}
+
+function renderDealPipeline(list,containerId){
+  var h='';
+  DEAL_STATUSES.forEach(function(s){
+    var inStatus=list.filter(function(d){return d.status===s.key});
+    var total=inStatus.reduce(function(sum,d){return sum+(d.amount||0)},0);
+    h+='<div class="pipeline-col"><h3>'+s.label+' <span class="count">'+inStatus.length+'</span></h3>';
+    if(total)h+='<div style="font-size:.75em;color:#5a7a6a;margin-bottom:8px">'+formatCurrency(total)+'</div>';
+    inStatus.forEach(function(d){
+      h+='<div class="pipeline-card" onclick="showDealDetail(\''+escapeAttr(d.id)+'\')">';
+      h+='<div class="deal-name">'+escapeHtml(d.name)+'</div>';
+      h+='<div class="deal-company">'+escapeHtml(d.company)+'</div>';
+      if(d.amount)h+='<div class="deal-amount">'+formatCurrency(d.amount)+'</div>';
+      h+='</div>';
+    });
+    h+='</div>';
+  });
+  document.getElementById(containerId).innerHTML=h;
+}
+
+function showDealForm(editId,preCustomerId){
+  var d=editId?deals.find(function(x){return x.id===editId}):null;
+  document.getElementById('modal-title').textContent=d?'案件を編集':'新規案件';
+  var custOptions='<option value="">-- 選択 --</option>';
+  customers.forEach(function(c){
+    var sel=(d&&d.customerId===c.id)||(preCustomerId===c.id)?'selected':'';
+    custOptions+='<option value="'+c.id+'" '+sel+'>'+escapeHtml(c.company)+'</option>';
+  });
+  var statusOptions='';
+  DEAL_STATUSES.forEach(function(s){
+    statusOptions+='<option value="'+s.key+'"'+((d&&d.status===s.key)?' selected':(!d&&s.key==='lead'?' selected':''))+'>'+s.label+'</option>';
+  });
+  var h='<form onsubmit="saveDeal(event,\''+(editId||'')+'\');return false">';
+  h+='<div class="form-group"><label>顧客 *</label><select class="form-input" id="f-custId" required>'+custOptions+'</select></div>';
+  h+='<div class="form-group"><label>案件名 *</label><input class="form-input" id="f-dealname" required value="'+escapeAttr(d?d.name:'')+'"></div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+='<div class="form-group"><label>ステータス</label><select class="form-input" id="f-status">'+statusOptions+'</select></div>';
+  h+='<div class="form-group"><label>金額</label><input class="form-input" id="f-amount" type="number" value="'+(d?d.amount||'':'')+'"></div></div>';
+  h+='<div class="form-group"><label>担当者</label><input class="form-input" id="f-assignee" value="'+escapeAttr(d?d.assignee:currentUser.name)+'"></div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+='<div class="form-group"><label>開始日</label><input class="form-input" id="f-startdate" type="date" value="'+escapeAttr(d?d.startDate:todayStr())+'"></div>';
+  h+='<div class="form-group"><label>期限</label><input class="form-input" id="f-deadline" type="date" value="'+escapeAttr(d?d.deadline:'')+'"></div></div>';
+  h+='<div class="form-group"><label>メモ</label><textarea class="form-input" id="f-dealmemo">'+escapeHtml(d?d.memo:'')+'</textarea></div>';
+  h+='<button class="btn-primary" type="submit">'+(d?'更新':'登録')+'</button></form>';
+  document.getElementById('modal-body').innerHTML=h;
+  openModal();
+}
+
+async function saveDeal(e,editId){
+  e.preventDefault();
+  var custId=document.getElementById('f-custId').value;
+  var cust=customers.find(function(x){return x.id===custId})||{};
+  var obj={
+    id:editId||generateId(),
+    customerId:custId,
+    company:cust.company||'',
+    name:document.getElementById('f-dealname').value.trim(),
+    status:document.getElementById('f-status').value,
+    amount:document.getElementById('f-amount').value||0,
+    assignee:document.getElementById('f-assignee').value.trim(),
+    startDate:document.getElementById('f-startdate').value,
+    deadline:document.getElementById('f-deadline').value,
+    memo:document.getElementById('f-dealmemo').value.trim(),
+    updatedAt:todayStr()
+  };
+  try{
+    if(editId){
+      var idx=deals.findIndex(function(x){return x.id===editId});
+      if(idx>=0){deals[idx]=obj;await updateRow('案件',idx,obj,DEAL_FIELDS);}
+    }else{
+      deals.push(obj);await appendRow('案件',obj,DEAL_FIELDS);
+    }
+    closeModal();renderDeals();showToast(editId?'更新しました':'登録しました');
+  }catch(e){showToast('保存に失敗しました');console.error(e);}
+}
+
+function showDealDetail(id){
+  var d=deals.find(function(x){return x.id===id});if(!d)return;
+  var relatedActivities=activities.filter(function(a){return a.dealId===id});
+  var h='<h2>'+escapeHtml(d.name)+'<div><button class="btn-icon" onclick="closeDetail();showDealForm(\''+escapeAttr(id)+'\')">&#9998;</button><button class="btn-icon btn-danger" onclick="deleteDeal(\''+escapeAttr(id)+'\')">&#128465;</button></div></h2>';
+  h+='<div style="margin-bottom:12px"><span class="status-badge '+d.status+'" style="font-size:.85em">'+getStatusLabel(d.status)+'</span></div>';
+  h+='<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.9em;margin-bottom:16px">';
+  h+='<span style="color:#5a7a6a">顧客</span><span style="font-weight:600">'+escapeHtml(d.company)+'</span>';
+  if(d.amount)h+='<span style="color:#5a7a6a">金額</span><span style="font-weight:700;color:#1a6b4a;font-size:1.1em">'+formatCurrency(d.amount)+'</span>';
+  if(d.assignee)h+='<span style="color:#5a7a6a">担当</span><span>'+escapeHtml(d.assignee)+'</span>';
+  if(d.startDate)h+='<span style="color:#5a7a6a">開始日</span><span>'+formatDate(d.startDate)+'</span>';
+  if(d.deadline)h+='<span style="color:#5a7a6a">期限</span><span>'+formatDate(d.deadline)+'</span>';
+  if(d.memo)h+='<span style="color:#5a7a6a">メモ</span><span>'+escapeHtml(d.memo)+'</span>';
+  h+='<span style="color:#5a7a6a">更新日</span><span>'+formatDate(d.updatedAt)+'</span>';
+  h+='</div>';
+
+  // Status change buttons
+  h+='<div style="margin-bottom:16px"><label style="font-size:.8em;font-weight:600;color:#3a5a4a;display:block;margin-bottom:6px">ステータス変更</label><div style="display:flex;flex-wrap:wrap;gap:4px">';
+  DEAL_STATUSES.forEach(function(s){
+    var active=d.status===s.key?' style="opacity:.4;cursor:default"':'';
+    h+='<button class="status-badge '+s.key+'" onclick="changeDealStatus(\''+escapeAttr(id)+'\',\''+s.key+'\')" style="cursor:pointer;border:none;font-size:.8em;padding:6px 12px'+(d.status===s.key?';outline:2px solid #1a6b4a':'')+'"'+active+'>'+s.label+'</button>';
+  });
+  h+='</div></div>';
+
+  // Related activities
+  h+='<h3 style="font-size:.9em;color:#1a6b4a;margin:16px 0 8px">活動履歴 ('+relatedActivities.length+')</h3>';
+  if(relatedActivities.length){
+    relatedActivities.forEach(function(a){
+      var at=ACTIVITY_TYPES.find(function(t){return t.key===a.type})||{icon:'',label:a.type};
+      h+='<div style="display:flex;gap:8px;padding:8px 12px;background:#f5f9f7;border-radius:8px;margin-bottom:6px;font-size:.85em">';
+      h+='<span>'+at.icon+'</span><div><div style="font-weight:600">'+escapeHtml(a.content.substring(0,80))+'</div><div style="color:#5a7a6a;font-size:.8em">'+formatDate(a.datetime)+' '+escapeHtml(a.assignee)+'</div></div></div>';
+    });
+  }else{h+='<p style="font-size:.85em;color:#5a7a6a">なし</p>';}
+  h+='<div class="detail-actions"><button class="btn-secondary" onclick="closeDetail();showActivityForm(\''+escapeAttr(d.customerId)+'\',\''+escapeAttr(id)+'\')">+ 活動記録</button></div>';
+
+  document.getElementById('detail-content').innerHTML=h;
+  document.getElementById('detail-overlay').classList.add('active');
+}
+
+async function changeDealStatus(id,status){
+  var idx=deals.findIndex(function(x){return x.id===id});
+  if(idx<0)return;
+  deals[idx].status=status;deals[idx].updatedAt=todayStr();
+  try{await updateRow('案件',idx,deals[idx],DEAL_FIELDS);showDealDetail(id);renderDeals();showToast(getStatusLabel(status)+'に変更');}
+  catch(e){showToast('更新に失敗しました');}
+}
+
+async function deleteDeal(id){
+  if(!confirm('この案件を削除しますか？'))return;
+  var idx=deals.findIndex(function(x){return x.id===id});
+  if(idx<0)return;
+  try{await deleteRow('案件',idx);deals.splice(idx,1);closeDetail();renderDeals();showToast('削除しました');}
+  catch(e){showToast('削除に失敗しました');}
+}
+
+// ==================== Activities ====================
+var ACTIVITY_FIELDS=['id','customerId','company','dealId','type','content','assignee','datetime'];
+
+function renderActivities(){
+  var filter=document.getElementById('activity-filter').value;
+  var filtered=activities.filter(function(a){return filter==='all'||a.type===filter;});
+  filtered.sort(function(a,b){return (b.datetime||'').localeCompare(a.datetime||'');});
+  if(!filtered.length){
+    document.getElementById('activity-list').innerHTML='';
+    document.getElementById('activity-empty').style.display='';return;
+  }
+  document.getElementById('activity-empty').style.display='none';
+  var h='';
+  filtered.forEach(function(a){
+    var at=ACTIVITY_TYPES.find(function(t){return t.key===a.type})||{icon:'\u{1F4DD}',label:a.type};
+    h+='<div class="activity-item">';
+    h+='<div class="activity-icon">'+at.icon+'</div>';
+    h+='<div class="activity-body">';
+    h+='<div class="activity-title">'+escapeHtml(a.content.substring(0,100))+'</div>';
+    h+='<div class="activity-meta">'+escapeHtml(a.company)+(a.assignee?' | '+escapeHtml(a.assignee):'')+(a.datetime?' | '+formatDate(a.datetime):'')+'</div>';
+    h+='</div>';
+    h+='<button class="btn-icon btn-danger" onclick="deleteActivity(\''+escapeAttr(a.id)+'\')" style="font-size:.7em">&#128465;</button>';
+    h+='</div>';
+  });
+  document.getElementById('activity-list').innerHTML=h;
+}
+
+function showActivityForm(preCustomerId,preDealId){
+  document.getElementById('modal-title').textContent='活動を記録';
+  var custOptions='<option value="">-- 選択 --</option>';
+  customers.forEach(function(c){
+    var sel=preCustomerId===c.id?'selected':'';
+    custOptions+='<option value="'+c.id+'" '+sel+'>'+escapeHtml(c.company)+'</option>';
+  });
+  var dealOptions='<option value="">-- なし --</option>';
+  deals.forEach(function(d){
+    var sel=preDealId===d.id?'selected':'';
+    dealOptions+='<option value="'+d.id+'" '+sel+'>'+escapeHtml(d.name)+' ('+escapeHtml(d.company)+')</option>';
+  });
+  var typeOptions='';
+  ACTIVITY_TYPES.forEach(function(t){
+    typeOptions+='<option value="'+t.key+'">'+t.icon+' '+t.label+'</option>';
+  });
+  var h='<form onsubmit="saveActivity(event);return false">';
+  h+='<div class="form-group"><label>顧客</label><select class="form-input" id="f-actcust">'+custOptions+'</select></div>';
+  h+='<div class="form-group"><label>案件</label><select class="form-input" id="f-actdeal">'+dealOptions+'</select></div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+='<div class="form-group"><label>種別</label><select class="form-input" id="f-acttype">'+typeOptions+'</select></div>';
+  h+='<div class="form-group"><label>日時</label><input class="form-input" id="f-actdate" type="date" value="'+todayStr()+'"></div></div>';
+  h+='<div class="form-group"><label>内容 *</label><textarea class="form-input" id="f-actcontent" required placeholder="活動内容を入力..."></textarea></div>';
+  h+='<div class="form-group"><label>担当者</label><input class="form-input" id="f-actassignee" value="'+escapeAttr(currentUser.name)+'"></div>';
+  h+='<button class="btn-primary" type="submit">記録</button></form>';
+  document.getElementById('modal-body').innerHTML=h;
+  openModal();
+}
+
+async function saveActivity(e){
+  e.preventDefault();
+  var custId=document.getElementById('f-actcust').value;
+  var cust=customers.find(function(x){return x.id===custId})||{};
+  var dealId=document.getElementById('f-actdeal').value;
+  var obj={
+    id:generateId(),
+    customerId:custId,
+    company:cust.company||'',
+    dealId:dealId,
+    type:document.getElementById('f-acttype').value,
+    content:document.getElementById('f-actcontent').value.trim(),
+    assignee:document.getElementById('f-actassignee').value.trim(),
+    datetime:document.getElementById('f-actdate').value
+  };
+  try{
+    activities.push(obj);await appendRow('活動',obj,ACTIVITY_FIELDS);
+    closeModal();renderActivities();showToast('記録しました');
+  }catch(e){showToast('保存に失敗しました');console.error(e);}
+}
+
+async function deleteActivity(id){
+  if(!confirm('この活動記録を削除しますか？'))return;
+  var idx=activities.findIndex(function(x){return x.id===id});
+  if(idx<0)return;
+  try{await deleteRow('活動',idx);activities.splice(idx,1);renderActivities();showToast('削除しました');}
+  catch(e){showToast('削除に失敗しました');}
+}
+
+// ==================== Dashboard ====================
+function renderDashboard(){
+  // Stats
+  var totalCustomers=customers.length;
+  var activeDeals=deals.filter(function(d){return ['lead','proposal','negotiation'].indexOf(d.status)!==-1});
+  var totalPipeline=activeDeals.reduce(function(s,d){return s+(d.amount||0)},0);
+  var orderedDeals=deals.filter(function(d){return ['ordered','delivered','invoiced','paid'].indexOf(d.status)!==-1});
+  var totalOrdered=orderedDeals.reduce(function(s,d){return s+(d.amount||0)},0);
+  var thisMonth=todayStr().substring(0,7);
+  var monthActivities=activities.filter(function(a){return (a.datetime||'').substring(0,7)===thisMonth}).length;
+
+  var sh='';
+  sh+='<div class="stat-card"><div class="stat-value">'+totalCustomers+'</div><div class="stat-label">顧客数</div></div>';
+  sh+='<div class="stat-card"><div class="stat-value">'+activeDeals.length+'</div><div class="stat-label">進行中案件</div></div>';
+  sh+='<div class="stat-card accent"><div class="stat-value">'+formatCurrency(totalPipeline).replace('円','')+'</div><div class="stat-label">パイプライン</div></div>';
+  sh+='<div class="stat-card"><div class="stat-value">'+formatCurrency(totalOrdered).replace('円','')+'</div><div class="stat-label">受注済み</div></div>';
+  sh+='<div class="stat-card"><div class="stat-value">'+monthActivities+'</div><div class="stat-label">今月の活動</div></div>';
+  sh+='<div class="stat-card"><div class="stat-value">'+deals.filter(function(d){return d.status==='paid'}).length+'</div><div class="stat-label">入金済み</div></div>';
+  document.getElementById('dashboard-stats').innerHTML=sh;
+
+  // Recent activities
+  var recent=activities.slice().sort(function(a,b){return (b.datetime||'').localeCompare(a.datetime||'')}).slice(0,5);
+  if(recent.length){
+    var ah='';
+    recent.forEach(function(a){
+      var at=ACTIVITY_TYPES.find(function(t){return t.key===a.type})||{icon:'\u{1F4DD}',label:a.type};
+      ah+='<div class="activity-item"><div class="activity-icon">'+at.icon+'</div><div class="activity-body">';
+      ah+='<div class="activity-title">'+escapeHtml(a.content.substring(0,60))+'</div>';
+      ah+='<div class="activity-meta">'+escapeHtml(a.company)+' | '+formatDate(a.datetime)+'</div>';
+      ah+='</div></div>';
+    });
+    document.getElementById('dashboard-activities').innerHTML=ah;
+  }else{
+    document.getElementById('dashboard-activities').innerHTML='<div class="empty-state" style="padding:20px"><div class="desc">まだ活動記録がありません</div></div>';
+  }
+
+  // Pipeline
+  var pipelineDeals=deals.filter(function(d){return d.status!=='paid'&&d.status!=='lost'});
+  renderDealPipeline(pipelineDeals,'dashboard-pipeline');
+}
+
+// ==================== Business Card Scan ====================
+async function handleCardScan(files){
+  if(!files||!files.length)return;
+  if(!GEMINI_API_KEY){showToast('管理者設定からGemini APIキーを登録してください');return;}
+  var file=files[0];
+  var preview=document.getElementById('scan-preview');
+  var previewImg=document.getElementById('scan-preview-img');
+  var loading=document.getElementById('scan-loading');
+  var result=document.getElementById('scan-result');
+
+  previewImg.src=URL.createObjectURL(file);
+  preview.style.display='';
+  loading.style.display='';
+  result.style.display='none';
+
+  try{
+    // Read file as base64
+    var base64=await new Promise(function(resolve){
+      var reader=new FileReader();
+      reader.onload=function(){resolve(reader.result.split(',')[1]);};
+      reader.readAsDataURL(file);
+    });
+
+    // Call Gemini
+    var body={
+      contents:[{parts:[
+        {inlineData:{mimeType:file.type,data:base64}},
+        {text:'この名刺の情報を読み取って、以下のJSON形式で返してください。読み取れない項目は空文字にしてください。\n{"company":"会社名","contact":"氏名","department":"部署","title":"役職","tel":"電話番号","email":"メールアドレス","address":"住所","url":"URL","fax":"FAX"}'}
+      ]}],
+      generationConfig:{temperature:0.1,maxOutputTokens:1024,responseMimeType:'application/json'}
+    };
+
+    var MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
+    var cardData=null;
+    for(var m=0;m<MODELS.length;m++){
+      try{
+        var res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+MODELS[m]+':generateContent?key='+GEMINI_API_KEY,{
+          method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
+        });
+        if(!res.ok)continue;
+        var data=await res.json();
+        var text=data.candidates[0].content.parts[0].text;
+        cardData=JSON.parse(text.match(/\{[\s\S]*\}/)[0]);
+        break;
+      }catch(e){continue;}
+    }
+
+    loading.style.display='none';
+    if(!cardData){result.innerHTML='<p style="color:#c0392b">読み取りに失敗しました。別の画像をお試しください。</p>';result.style.display='';return;}
+
+    var rh='<h3>読み取り結果</h3>';
+    var fields=[
+      ['company','会社名'],['contact','氏名'],['department','部署'],['title','役職'],
+      ['tel','TEL'],['email','メール'],['address','住所'],['url','URL'],['fax','FAX']
+    ];
+    fields.forEach(function(f){
+      if(cardData[f[0]])rh+='<div class="field"><span class="label">'+f[1]+'</span><span class="value">'+escapeHtml(cardData[f[0]])+'</span></div>';
+    });
+    rh+='<button class="btn-primary" style="margin-top:12px" onclick="registerFromCard()">この内容で顧客登録</button>';
+    result.innerHTML=rh;result.style.display='';
+
+    // Store for registration
+    window._scannedCard=cardData;
+  }catch(e){
+    loading.style.display='none';
+    result.innerHTML='<p style="color:#c0392b">エラー: '+escapeHtml(e.message)+'</p>';result.style.display='';
+    console.error(e);
+  }
+}
+
+function registerFromCard(){
+  if(!window._scannedCard)return;
+  var c=window._scannedCard;
+  // Pre-fill customer form
+  document.getElementById('modal-title').textContent='新規顧客（名刺から）';
+  var h='<form onsubmit="saveCustomer(event,\'\');return false">';
+  h+='<div class="form-group"><label>会社名 *</label><input class="form-input" id="f-company" required value="'+escapeAttr(c.company||'')+'"></div>';
+  h+='<div class="form-group"><label>担当者名</label><input class="form-input" id="f-contact" value="'+escapeAttr(c.contact||'')+'"></div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+='<div class="form-group"><label>部署</label><input class="form-input" id="f-department" value="'+escapeAttr(c.department||'')+'"></div>';
+  h+='<div class="form-group"><label>役職</label><input class="form-input" id="f-title" value="'+escapeAttr(c.title||'')+'"></div></div>';
+  h+='<div class="form-group"><label>TEL</label><input class="form-input" id="f-tel" type="tel" value="'+escapeAttr(c.tel||'')+'"></div>';
+  h+='<div class="form-group"><label>メール</label><input class="form-input" id="f-email" type="email" value="'+escapeAttr(c.email||'')+'"></div>';
+  h+='<div class="form-group"><label>住所</label><input class="form-input" id="f-address" value="'+escapeAttr(c.address||'')+'"></div>';
+  h+='<div class="form-group"><label>メモ</label><textarea class="form-input" id="f-memo">'+(c.url?'URL: '+escapeHtml(c.url)+'\n':'')+(c.fax?'FAX: '+escapeHtml(c.fax):'')+'</textarea></div>';
+  h+='<button class="btn-primary" type="submit">登録</button></form>';
+  document.getElementById('modal-body').innerHTML=h;
+  openModal();
+}
+
+// ==================== Modal / Detail ====================
+function openModal(){document.getElementById('modal-overlay').classList.add('active');}
+function closeModal(){document.getElementById('modal-overlay').classList.remove('active');}
+function closeDetail(){document.getElementById('detail-overlay').classList.remove('active');}
+
+// Close on click outside
+document.addEventListener('click',function(e){
+  var menu=document.getElementById('user-menu');
+  if(menu.style.display!=='none'&&!e.target.closest('.auth-area'))menu.style.display='none';
+});
+
+// ==================== Init ====================
+window.addEventListener('load',function(){
+  if(typeof google!=='undefined'&&google.accounts)initGIS();
+  else{var check=setInterval(function(){if(typeof google!=='undefined'&&google.accounts){clearInterval(check);initGIS();}},200);}
+});
+</script>
+</body>
+</html>
