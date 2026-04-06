@@ -322,6 +322,11 @@ textarea.form-input{resize:vertical;min-height:80px}
         <button class="btn-small" onclick="saveGeminiKey()">保存</button>
       </div>
       <div id="gemini-key-status" style="font-size:.8em;color:#5a7a6a;margin-top:4px"></div>
+      <hr style="border:none;border-top:1px solid #e0e8e4;margin:16px 0">
+      <h3 style="font-size:.85em;margin-bottom:6px">人事評価シート</h3>
+      <p style="font-size:.8em;color:#5a7a6a;margin-bottom:8px">人事フォルダに評価用スプレッドシートを作成します（管理者のみ閲覧）</p>
+      <div id="hr-setup-status" style="font-size:.85em;margin-bottom:8px"></div>
+      <button class="btn-small" id="hr-setup-btn" onclick="setupHrSheet()">人事シートを作成</button>
     </div>
 
     <!-- Tabs -->
@@ -331,6 +336,7 @@ textarea.form-input{resize:vertical;min-height:80px}
       <button class="tab" id="tab-deals" onclick="switchTab('deals')">案件</button>
       <button class="tab" id="tab-activities" onclick="switchTab('activities')">活動</button>
       <button class="tab" id="tab-cards" onclick="switchTab('cards')">名刺</button>
+      <button class="tab" id="tab-hr" onclick="switchTab('hr')" style="display:none">人事</button>
     </div>
 
     <!-- Dashboard panel -->
@@ -442,6 +448,27 @@ textarea.form-input{resize:vertical;min-height:80px}
         <div id="scan-status" style="display:none;margin-top:16px">
           <div class="loading-state" id="scan-loading"><div class="spinner"></div><div>AIが名刺を読み取り中...</div></div>
           <div id="scan-result" class="scan-result" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- HR panel (admin only) -->
+    <div id="panel-hr" style="display:none">
+      <div class="card">
+        <h2>人事評価</h2>
+        <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+          <select class="form-input" id="hr-period-select" onchange="renderHrEvaluations()" style="width:auto;padding:6px 10px;font-size:.8em">
+            <option value="">-- 評価期間 --</option>
+          </select>
+          <button class="btn-small" onclick="showHrPeriodForm()">+ 期間追加</button>
+          <div style="flex:1"></div>
+          <button class="btn-small" onclick="showHrEvalForm()">+ 評価入力</button>
+        </div>
+        <div id="hr-eval-list"></div>
+        <div class="empty-state" id="hr-empty" style="display:none">
+          <div class="icon">&#128203;</div>
+          <div class="title">評価データがありません</div>
+          <div class="desc">「+ 評価入力」から社員の評価を入力してください</div>
         </div>
       </div>
     </div>
@@ -577,7 +604,7 @@ function showView(name){
 }
 function switchTab(tab){
   currentTab=tab;
-  ['dashboard','customers','deals','activities','cards'].forEach(function(t){
+  ['dashboard','customers','deals','activities','cards','hr'].forEach(function(t){
     var tabEl=document.getElementById('tab-'+t);
     var panelEl=document.getElementById('panel-'+t);
     if(tabEl)tabEl.classList.toggle('active',tab===t);
@@ -587,6 +614,7 @@ function switchTab(tab){
   if(tab==='customers')renderCustomers();
   if(tab==='deals')renderDeals();
   if(tab==='activities')renderActivities();
+  if(tab==='hr')renderHrEvaluations();
   updateBackBtn();
 }
 function updateBackBtn(){
@@ -695,6 +723,8 @@ function showMainView(){
   document.getElementById('admin-badge').style.display=admin?'':'none';
   document.getElementById('admin-panel').style.display='none';
   GEMINI_API_KEY=orgConfig.geminiApiKey||'';
+  document.getElementById('tab-hr').style.display=admin&&orgConfig.hrSpreadsheetId?'':'none';
+  if(orgConfig.hrSpreadsheetId&&admin)loadHrData();
   switchTab('dashboard');
 }
 function isAdmin(){if(!orgConfig)return false;var admins=orgConfig.admins||[orgConfig.admin];return admins.indexOf(currentUser.email)!==-1;}
@@ -702,7 +732,7 @@ function getAdmins(){if(!orgConfig)return[];return orgConfig.admins||[orgConfig.
 function toggleAdminPanel(){
   var p=document.getElementById('admin-panel');var visible=p.style.display!=='none';
   p.style.display=visible?'none':'';
-  if(!visible){renderAdminList();loadGeminiKey();}
+  if(!visible){renderAdminList();loadGeminiKey();loadHrSetupStatus();}
 }
 function renderAdminList(){
   var admins=getAdmins();var h='';
@@ -1358,6 +1388,302 @@ async function createCalendarEvent(e,customerId){
     // Reload events in detail
     loadCustomerEvents(c.company,c.contact);
   }catch(e){showToast('カレンダーへの追加に失敗しました');console.error(e);}
+}
+
+// ==================== HR Evaluation ====================
+var hrEvaluations=[];
+var hrPeriods=[];
+var HR_EVAL_FIELDS=['id','period','name','department','grade','goals','achievement','strength','improvement','score','evaluator','evaluatedAt'];
+
+function loadHrSetupStatus(){
+  var status=document.getElementById('hr-setup-status');
+  var btn=document.getElementById('hr-setup-btn');
+  if(orgConfig.hrSpreadsheetId){
+    status.innerHTML='<span style="color:#059669">&#10003; 設定済み</span> <a href="https://docs.google.com/spreadsheets/d/'+orgConfig.hrSpreadsheetId+'" target="_blank" style="color:#1a6b4a;font-size:.8em">シートを開く</a>';
+    btn.textContent='再作成';
+  }else{
+    status.textContent='未設定';
+    btn.textContent='人事シートを作成';
+  }
+}
+
+async function setupHrSheet(){
+  var btn=document.getElementById('hr-setup-btn');
+  btn.disabled=true;btn.textContent='作成中...';
+  try{
+    // Create HR folder inside the base folder
+    var folderMeta={name:'人事',mimeType:'application/vnd.google-apps.folder',parents:[orgConfig.folderId]};
+    var folderRes=await apiFetch('https://www.googleapis.com/drive/v3/files?supportsAllDrives=true',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(folderMeta)
+    });
+    var hrFolderId=folderRes.id;
+
+    // Create spreadsheet
+    var ssBody={properties:{title:'Choreia Flow 人事評価 - '+currentUser.domain},sheets:[
+      {properties:{title:'評価',gridProperties:{frozenRowCount:1}}},
+      {properties:{title:'評価期間',gridProperties:{frozenRowCount:1}}}
+    ]};
+    var ss=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ssBody)});
+    var ssId=ss.spreadsheetId;
+
+    // Move to HR folder
+    var fileInfo=await apiFetch('https://www.googleapis.com/drive/v3/files/'+ssId+'?fields=parents&supportsAllDrives=true');
+    var prevParents=(fileInfo.parents||[]).join(',');
+    await fetch('https://www.googleapis.com/drive/v3/files/'+ssId+'?addParents='+hrFolderId+'&removeParents='+prevParents+'&supportsAllDrives=true',{
+      method:'PATCH',headers:{'Authorization':'Bearer '+accessToken,'Content-Type':'application/json'},body:'{}'
+    });
+
+    // Write headers
+    var headers=[
+      {range:'評価!A1:L1',values:[['ID','評価期間','氏名','部署','等級','目標','達成度','強み','改善点','スコア','評価者','評価日']]},
+      {range:'評価期間!A1:D1',values:[['ID','期間名','開始日','終了日']]}
+    ];
+    await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+ssId+'/values:batchUpdate',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({valueInputOption:'RAW',data:headers})
+    });
+
+    // Save to config
+    orgConfig.hrSpreadsheetId=ssId;
+    orgConfig.hrFolderId=hrFolderId;
+    await saveConfig();
+
+    document.getElementById('tab-hr').style.display='';
+    loadHrSetupStatus();
+    showToast('人事評価シートを作成しました');
+  }catch(e){
+    showToast('作成に失敗しました: '+e.message);console.error(e);
+  }finally{btn.disabled=false;btn.textContent='人事シートを作成';}
+}
+
+async function loadHrData(){
+  var ssId=orgConfig.hrSpreadsheetId;if(!ssId)return;
+  try{
+    var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+ssId+'/values:batchGet?ranges='+encodeURIComponent('評価!A2:L1000')+'&ranges='+encodeURIComponent('評価期間!A2:D100'));
+    var ranges=data.valueRanges||[];
+    hrEvaluations=parseRows(ranges[0]&&ranges[0].values||[],HR_EVAL_FIELDS);
+    hrPeriods=parseRows(ranges[1]&&ranges[1].values||[],['id','name','startDate','endDate']);
+    // Update period select
+    var sel=document.getElementById('hr-period-select');
+    var curVal=sel.value;
+    sel.innerHTML='<option value="">すべて</option>';
+    hrPeriods.forEach(function(p){
+      sel.innerHTML+='<option value="'+escapeAttr(p.id)+'">'+escapeHtml(p.name)+'</option>';
+    });
+    sel.value=curVal;
+  }catch(e){console.error('loadHrData error:',e);}
+}
+
+function renderHrEvaluations(){
+  var period=document.getElementById('hr-period-select').value;
+  var filtered=hrEvaluations.filter(function(ev){return !period||ev.period===period;});
+  if(!filtered.length){
+    document.getElementById('hr-eval-list').innerHTML='';
+    document.getElementById('hr-empty').style.display='';return;
+  }
+  document.getElementById('hr-empty').style.display='none';
+  var h='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>氏名</th><th>部署</th><th>スコア</th><th>達成度</th><th class="hide-mobile">評価期間</th><th class="hide-mobile">評価者</th><th></th></tr></thead><tbody>';
+  filtered.forEach(function(ev){
+    var periodName='';
+    var p=hrPeriods.find(function(x){return x.id===ev.period});
+    if(p)periodName=p.name;
+    var scoreColor=ev.score>=4?'#059669':ev.score>=3?'#d97706':'#dc2626';
+    h+='<tr onclick="showHrDetail(\''+escapeAttr(ev.id)+'\')">';
+    h+='<td class="name-cell">'+escapeHtml(ev.name)+'</td>';
+    h+='<td>'+escapeHtml(ev.department)+'</td>';
+    h+='<td style="font-weight:700;color:'+scoreColor+'">'+escapeHtml(ev.score)+'</td>';
+    h+='<td>'+escapeHtml(ev.achievement)+'</td>';
+    h+='<td class="hide-mobile">'+escapeHtml(periodName)+'</td>';
+    h+='<td class="hide-mobile">'+escapeHtml(ev.evaluator)+'</td>';
+    h+='<td><button class="btn-icon" onclick="event.stopPropagation();showHrEvalForm(\''+escapeAttr(ev.id)+'\')">&#9998;</button></td>';
+    h+='</tr>';
+  });
+  h+='</tbody></table></div>';
+  document.getElementById('hr-eval-list').innerHTML=h;
+}
+
+function showHrDetail(id){
+  var ev=hrEvaluations.find(function(x){return x.id===id});if(!ev)return;
+  var periodName='';var p=hrPeriods.find(function(x){return x.id===ev.period});if(p)periodName=p.name;
+  var h='<h2>'+escapeHtml(ev.name)+' の評価</h2>';
+  h+='<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.9em;margin-bottom:16px">';
+  h+='<span style="color:#5a7a6a">評価期間</span><span>'+escapeHtml(periodName)+'</span>';
+  h+='<span style="color:#5a7a6a">部署</span><span>'+escapeHtml(ev.department)+'</span>';
+  if(ev.grade)h+='<span style="color:#5a7a6a">等級</span><span>'+escapeHtml(ev.grade)+'</span>';
+  h+='<span style="color:#5a7a6a">スコア</span><span style="font-weight:700;font-size:1.2em;color:#1a6b4a">'+escapeHtml(ev.score)+' / 5</span>';
+  h+='<span style="color:#5a7a6a">評価者</span><span>'+escapeHtml(ev.evaluator)+'</span>';
+  h+='<span style="color:#5a7a6a">評価日</span><span>'+formatDate(ev.evaluatedAt)+'</span>';
+  h+='</div>';
+  var sections=[['goals','目標'],['achievement','達成度'],['strength','強み'],['improvement','改善点']];
+  sections.forEach(function(s){
+    if(ev[s[0]]){
+      h+='<div style="margin-bottom:12px"><h3 style="font-size:.85em;color:#1a6b4a;margin-bottom:4px">'+s[1]+'</h3>';
+      h+='<div style="font-size:.85em;background:#f5f9f7;padding:12px;border-radius:8px;white-space:pre-wrap;line-height:1.7">'+escapeHtml(ev[s[0]])+'</div></div>';
+    }
+  });
+
+  // Gemini AI analysis button
+  if(GEMINI_API_KEY){
+    h+='<div style="margin-top:16px"><h3 style="font-size:.85em;color:#1a6b4a;margin-bottom:8px">&#129302; AI分析</h3>';
+    h+='<div id="hr-ai-advice"><button class="btn-secondary" onclick="getHrAdvice(\''+escapeAttr(id)+'\')" style="width:100%">&#10024; この社員の傾向分析・育成アドバイス</button></div></div>';
+  }
+
+  h+='<div class="detail-actions"><button class="btn-secondary" onclick="closeDetail();showHrEvalForm(\''+escapeAttr(id)+'\')">&#9998; 編集</button>';
+  h+='<button class="btn-danger" onclick="deleteHrEval(\''+escapeAttr(id)+'\')">削除</button></div>';
+
+  document.getElementById('detail-content').innerHTML=h;
+  document.getElementById('detail-overlay').classList.add('active');
+}
+
+function showHrPeriodForm(){
+  document.getElementById('modal-title').textContent='評価期間を追加';
+  var h='<form onsubmit="saveHrPeriod(event);return false">';
+  h+='<div class="form-group"><label>期間名 *</label><input class="form-input" id="f-hrperiod" required placeholder="例: 2026年度 上期"></div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+='<div class="form-group"><label>開始日</label><input class="form-input" id="f-hrstart" type="date"></div>';
+  h+='<div class="form-group"><label>終了日</label><input class="form-input" id="f-hrend" type="date"></div></div>';
+  h+='<button class="btn-primary" type="submit">追加</button></form>';
+  document.getElementById('modal-body').innerHTML=h;
+  openModal();
+}
+
+async function saveHrPeriod(e){
+  e.preventDefault();
+  var obj={id:generateId(),name:document.getElementById('f-hrperiod').value.trim(),startDate:document.getElementById('f-hrstart').value,endDate:document.getElementById('f-hrend').value};
+  try{
+    var ssId=orgConfig.hrSpreadsheetId;
+    await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+ssId+'/values/'+encodeURIComponent('評価期間!A:D')+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({values:[toRow(obj,['id','name','startDate','endDate'])]})
+    });
+    hrPeriods.push(obj);
+    var sel=document.getElementById('hr-period-select');
+    sel.innerHTML+='<option value="'+escapeAttr(obj.id)+'">'+escapeHtml(obj.name)+'</option>';
+    closeModal();showToast('評価期間を追加しました');
+  }catch(e){showToast('保存に失敗しました');console.error(e);}
+}
+
+function showHrEvalForm(editId){
+  var ev=editId?hrEvaluations.find(function(x){return x.id===editId}):null;
+  document.getElementById('modal-title').textContent=ev?'評価を編集':'評価入力';
+  var periodOpts='<option value="">-- 選択 --</option>';
+  hrPeriods.forEach(function(p){
+    periodOpts+='<option value="'+p.id+'"'+(ev&&ev.period===p.id?' selected':'')+'>'+escapeHtml(p.name)+'</option>';
+  });
+  var h='<form onsubmit="saveHrEval(event,\''+(editId||'')+'\');return false">';
+  h+='<div class="form-group"><label>評価期間 *</label><select class="form-input" id="f-hrevperiod" required>'+periodOpts+'</select></div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+='<div class="form-group"><label>氏名 *</label><input class="form-input" id="f-hrevname" required value="'+escapeAttr(ev?ev.name:'')+'"></div>';
+  h+='<div class="form-group"><label>部署</label><input class="form-input" id="f-hrevdept" value="'+escapeAttr(ev?ev.department:'')+'"></div></div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+  h+='<div class="form-group"><label>等級</label><input class="form-input" id="f-hrevgrade" value="'+escapeAttr(ev?ev.grade:'')+'"></div>';
+  h+='<div class="form-group"><label>スコア (1-5)</label><input class="form-input" id="f-hrevscore" type="number" min="1" max="5" step="0.5" value="'+(ev?ev.score:'3')+'"></div></div>';
+  h+='<div class="form-group"><label>目標</label><textarea class="form-input" id="f-hrevgoals" rows="3">'+escapeHtml(ev?ev.goals:'')+'</textarea></div>';
+  h+='<div class="form-group"><label>達成度</label><textarea class="form-input" id="f-hrevachieve" rows="2">'+escapeHtml(ev?ev.achievement:'')+'</textarea></div>';
+  h+='<div class="form-group"><label>強み</label><textarea class="form-input" id="f-hrevstrength" rows="2">'+escapeHtml(ev?ev.strength:'')+'</textarea></div>';
+  h+='<div class="form-group"><label>改善点</label><textarea class="form-input" id="f-hrevimprove" rows="2">'+escapeHtml(ev?ev.improvement:'')+'</textarea></div>';
+  h+='<div class="form-group"><label>評価者</label><input class="form-input" id="f-hrevevaluator" value="'+escapeAttr(ev?ev.evaluator:currentUser.name)+'"></div>';
+  h+='<button class="btn-primary" type="submit">'+(ev?'更新':'登録')+'</button></form>';
+  document.getElementById('modal-body').innerHTML=h;
+  openModal();
+}
+
+async function saveHrEval(e,editId){
+  e.preventDefault();
+  var obj={
+    id:editId||generateId(),
+    period:document.getElementById('f-hrevperiod').value,
+    name:document.getElementById('f-hrevname').value.trim(),
+    department:document.getElementById('f-hrevdept').value.trim(),
+    grade:document.getElementById('f-hrevgrade').value.trim(),
+    goals:document.getElementById('f-hrevgoals').value.trim(),
+    achievement:document.getElementById('f-hrevachieve').value.trim(),
+    strength:document.getElementById('f-hrevstrength').value.trim(),
+    improvement:document.getElementById('f-hrevimprove').value.trim(),
+    score:document.getElementById('f-hrevscore').value,
+    evaluator:document.getElementById('f-hrevevaluator').value.trim(),
+    evaluatedAt:todayStr()
+  };
+  var ssId=orgConfig.hrSpreadsheetId;
+  try{
+    if(editId){
+      var idx=hrEvaluations.findIndex(function(x){return x.id===editId});
+      if(idx>=0){
+        hrEvaluations[idx]=obj;
+        var range='評価!A'+(idx+2)+':L'+(idx+2);
+        await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+ssId+'/values/'+encodeURIComponent(range)+'?valueInputOption=RAW',{
+          method:'PUT',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({values:[toRow(obj,HR_EVAL_FIELDS)]})
+        });
+      }
+    }else{
+      hrEvaluations.push(obj);
+      await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+ssId+'/values/'+encodeURIComponent('評価!A:L')+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({values:[toRow(obj,HR_EVAL_FIELDS)]})
+      });
+    }
+    closeModal();renderHrEvaluations();showToast(editId?'更新しました':'登録しました');
+  }catch(e){showToast('保存に失敗しました');console.error(e);}
+}
+
+async function deleteHrEval(id){
+  if(!confirm('この評価を削除しますか？'))return;
+  var idx=hrEvaluations.findIndex(function(x){return x.id===id});if(idx<0)return;
+  var ssId=orgConfig.hrSpreadsheetId;
+  try{
+    var meta=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+ssId+'?fields=sheets.properties');
+    var sheetId=0;(meta.sheets||[]).forEach(function(s){if(s.properties.title==='評価')sheetId=s.properties.sheetId;});
+    await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+ssId+':batchUpdate',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({requests:[{deleteDimension:{range:{sheetId:sheetId,dimension:'ROWS',startIndex:idx+1,endIndex:idx+2}}}]})
+    });
+    hrEvaluations.splice(idx,1);closeDetail();renderHrEvaluations();showToast('削除しました');
+  }catch(e){showToast('削除に失敗しました');console.error(e);}
+}
+
+async function getHrAdvice(evalId){
+  var ev=hrEvaluations.find(function(x){return x.id===evalId});if(!ev)return;
+  var container=document.getElementById('hr-ai-advice');
+  container.innerHTML='<div class="loading-state" style="padding:16px"><div class="spinner"></div><div style="font-size:.85em">AI分析中...</div></div>';
+
+  // Gather all evaluations for this person
+  var personEvals=hrEvaluations.filter(function(x){return x.name===ev.name});
+  personEvals.sort(function(a,b){return (a.evaluatedAt||'').localeCompare(b.evaluatedAt||'');});
+
+  var ctx='## 社員情報\n氏名: '+ev.name+'\n部署: '+ev.department+'\n等級: '+ev.grade+'\n\n';
+  ctx+='## 評価履歴 ('+personEvals.length+'件)\n';
+  personEvals.forEach(function(e){
+    var pName='';var p=hrPeriods.find(function(x){return x.id===e.period});if(p)pName=p.name;
+    ctx+='### '+pName+' (スコア: '+e.score+'/5)\n';
+    ctx+='目標: '+e.goals+'\n達成度: '+e.achievement+'\n強み: '+e.strength+'\n改善点: '+e.improvement+'\n評価者: '+e.evaluator+'\n\n';
+  });
+
+  var prompt=ctx+'上記の社員の評価履歴を分析して、以下の観点でアドバイスしてください:\n'+
+    '1. 成長の傾向（スコアや内容の変化パターン）\n'+
+    '2. この社員の持ち味と活かし方\n'+
+    '3. 具体的な育成アクション（研修、配置、目標設定の提案）\n'+
+    '4. 注意すべきリスク（モチベーション低下の兆候など）\n'+
+    '日本語で、箇条書きで簡潔に回答してください。';
+
+  try{
+    var body={contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.3,maxOutputTokens:1024}};
+    var MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
+    var advice=null;
+    for(var m=0;m<MODELS.length;m++){
+      try{
+        var res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+MODELS[m]+':generateContent?key='+GEMINI_API_KEY,{
+          method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
+        });
+        if(!res.ok)continue;
+        var data=await res.json();
+        advice=data.candidates[0].content.parts[0].text;break;
+      }catch(e){continue;}
+    }
+    if(!advice){container.innerHTML='<p style="color:#c0392b;font-size:.85em">分析に失敗しました</p>';return;}
+    var html=escapeHtml(advice).replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');
+    container.innerHTML='<div style="font-size:.85em;line-height:1.7;color:#1a3a2a;background:#f5f9f7;padding:14px;border-radius:10px;border:1px solid #d0ddd6">'+html+'</div>';
+  }catch(e){container.innerHTML='<p style="color:#c0392b;font-size:.85em">エラー: '+escapeHtml(e.message)+'</p>';}
 }
 
 // ==================== Gemini AI Advice ====================
