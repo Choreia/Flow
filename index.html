@@ -336,7 +336,6 @@ textarea.form-input{resize:vertical;min-height:80px}
       <button class="tab" id="tab-activities" onclick="switchTab('activities')">活動</button>
       <button class="tab" id="tab-cards" onclick="switchTab('cards')">名刺</button>
       <button class="tab" id="tab-hr" onclick="switchTab('hr')" style="display:none">人事</button>
-      <button class="tab" id="tab-ai" onclick="switchTab('ai')" style="display:none">AI分析</button>
     </div>
 
     <!-- Dashboard panel -->
@@ -514,32 +513,6 @@ textarea.form-input{resize:vertical;min-height:80px}
       </div>
     </div>
 
-    <!-- AI Analysis panel (admin only) -->
-    <div id="panel-ai" style="display:none">
-      <div class="card">
-        <h2>&#129302; AI 横断分析</h2>
-        <p style="font-size:.85em;color:#5a7a6a;margin-bottom:16px">顧客・案件・活動・人事の全データをAIに渡して分析します。自由に質問できます。</p>
-
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">
-          <button class="btn-secondary" onclick="runPresetAnalysis('sales')" style="font-size:.8em">&#128200; 売上・案件分析</button>
-          <button class="btn-secondary" onclick="runPresetAnalysis('activity')" style="font-size:.8em">&#128203; 活動量分析</button>
-          <button class="btn-secondary" onclick="runPresetAnalysis('risk')" style="font-size:.8em">&#9888; リスク・アラート</button>
-          <button class="btn-secondary" onclick="runPresetAnalysis('hr')" style="font-size:.8em">&#128101; 人事・組織分析</button>
-          <button class="btn-secondary" onclick="runPresetAnalysis('strategy')" style="font-size:.8em">&#127919; 戦略提案</button>
-        </div>
-
-        <div class="form-group">
-          <label>自由に質問</label>
-          <textarea class="form-input" id="ai-query" rows="3" placeholder="例: 最近3ヶ月で活動が止まっている顧客は？&#10;例: 営業担当ごとの案件数と金額を比較して&#10;例: 来月までに対応すべき案件を優先度順に"></textarea>
-        </div>
-        <div style="display:flex;gap:8px;margin-bottom:16px">
-          <label style="font-size:.8em;display:flex;align-items:center;gap:4px;color:#5a7a6a"><input type="checkbox" id="ai-include-hr" checked> 人事データも含める</label>
-        </div>
-        <button class="btn-primary" onclick="runFreeAnalysis()">分析実行</button>
-      </div>
-
-      <div id="ai-analysis-history"></div>
-    </div>
   </div>
 </div>
 
@@ -672,7 +645,7 @@ function showView(name){
 }
 function switchTab(tab){
   currentTab=tab;
-  ['dashboard','customers','deals','activities','cards','hr','ai'].forEach(function(t){
+  ['dashboard','customers','deals','activities','cards','hr'].forEach(function(t){
     var tabEl=document.getElementById('tab-'+t);
     var panelEl=document.getElementById('panel-'+t);
     if(tabEl)tabEl.classList.toggle('active',tab===t);
@@ -793,7 +766,6 @@ function showMainView(){
   document.getElementById('admin-panel').style.display='none';
   GEMINI_API_KEY=orgConfig.geminiApiKey||'';
   document.getElementById('tab-hr').style.display=admin&&orgConfig.hrSpreadsheetId?'':'none';
-  document.getElementById('tab-ai').style.display=admin&&GEMINI_API_KEY?'':'none';
   if(orgConfig.hrSpreadsheetId&&admin)loadHrData();
   switchTab('dashboard');
 }
@@ -1834,116 +1806,6 @@ async function getCustomerAdvice(customerId){
 }
 
 // ==================== AI Cross-Module Analysis ====================
-function buildFullContext(includeHr){
-  var ctx='# Choreia Flow データ全体\n\n';
-  ctx+='## 今日の日付: '+todayStr()+'\n\n';
-
-  // Customers
-  ctx+='## 顧客一覧 ('+customers.length+'社)\n';
-  customers.forEach(function(c){
-    ctx+='- '+c.company+' | 担当:'+c.contact+' | '+c.department+' '+c.title+' | TEL:'+c.tel+' | Email:'+c.email+' | 登録:'+c.createdAt+(c.memo?' | メモ:'+c.memo:'')+'\n';
-  });
-
-  // Deals
-  ctx+='\n## 案件一覧 ('+deals.length+'件)\n';
-  deals.forEach(function(d){
-    ctx+='- '+d.name+' ['+getStatusLabel(d.status)+'] | 顧客:'+d.company+' | 金額:'+d.amount+' | 担当:'+d.assignee+' | 開始:'+d.startDate+' | 期限:'+d.deadline+(d.memo?' | メモ:'+d.memo:'')+' | 更新:'+d.updatedAt+'\n';
-  });
-
-  // Activities
-  var sortedActs=activities.slice().sort(function(a,b){return (b.datetime||'').localeCompare(a.datetime||'');});
-  ctx+='\n## 活動履歴 (直近50件 / 全'+activities.length+'件)\n';
-  sortedActs.slice(0,50).forEach(function(a){
-    var at=ACTIVITY_TYPES.find(function(t){return t.key===a.type})||{label:a.type};
-    ctx+='- '+a.datetime+' ['+at.label+'] '+a.company+': '+a.content+' ('+a.assignee+')\n';
-  });
-
-  // HR (optional)
-  if(includeHr&&hrEvaluations.length){
-    ctx+='\n## 人事評価 ('+hrEvaluations.length+'件)\n';
-    hrEvaluations.forEach(function(ev){
-      var pName='';var p=hrPeriods.find(function(x){return x.id===ev.period});if(p)pName=p.name;
-      ctx+='- '+ev.name+' | '+ev.department+' | 等級:'+ev.grade+' | スコア:'+ev.score+'/5 | 期間:'+pName+' | 目標:'+ev.goals+' | 達成度:'+ev.achievement+' | 強み:'+ev.strength+' | 改善点:'+ev.improvement+'\n';
-    });
-  }
-
-  // Summary stats
-  var activeDeals=deals.filter(function(d){return ['lead','proposal','negotiation'].indexOf(d.status)!==-1});
-  var totalPipeline=activeDeals.reduce(function(s,d){return s+(d.amount||0)},0);
-  var orderedTotal=deals.filter(function(d){return ['ordered','delivered','invoiced','paid'].indexOf(d.status)!==-1}).reduce(function(s,d){return s+(d.amount||0)},0);
-  ctx+='\n## サマリー\n';
-  ctx+='- 顧客数: '+customers.length+'\n';
-  ctx+='- 進行中案件: '+activeDeals.length+'件 ('+totalPipeline+'円)\n';
-  ctx+='- 受注済み合計: '+orderedTotal+'円\n';
-  ctx+='- 今月の活動数: '+activities.filter(function(a){return (a.datetime||'').substring(0,7)===todayStr().substring(0,7)}).length+'\n';
-
-  return ctx;
-}
-
-var PRESET_PROMPTS={
-  sales:'以下のデータから売上・案件を分析してください:\n1. 案件パイプラインの状況（ステータス別の件数・金額）\n2. 受注率・失注率の傾向\n3. 金額の大きい案件のリスク\n4. 売上予測と改善提案\n数値を具体的に示してください。',
-  activity:'以下のデータから活動量を分析してください:\n1. 担当者ごとの活動件数・種別の偏り\n2. 顧客ごとの接触頻度（放置されている顧客をリストアップ）\n3. 活動と受注の相関（よく活動している顧客は受注できているか）\n4. 活動量を増やすべき顧客・担当者の提案',
-  risk:'以下のデータからリスクとアラートを分析してください:\n1. 期限が迫っている or 過ぎている案件\n2. 長期間更新されていない案件\n3. 活動が止まっている顧客（2週間以上接触なし）\n4. ステータスが長期間変わっていない案件\n5. 対応の優先度順にリストアップ\n具体的な顧客名・案件名を挙げてください。',
-  hr:'以下のデータから人事・組織の観点で分析してください:\n1. チーム全体の評価傾向（スコア分布）\n2. 成長している社員と伸び悩んでいる社員\n3. 営業実績（案件・活動）と人事評価の相関\n4. 組織強化のための具体的な施策提案\n5. 配置転換やチーム編成の提案',
-  strategy:'以下のデータから経営戦略の観点で分析・提案してください:\n1. 現在のビジネスの強みと弱み\n2. 顧客ポートフォリオ分析（業種・規模の偏り）\n3. 売上を伸ばすための具体的なアクションプラン\n4. 組織・人材面での課題と対策\n5. 3ヶ月後・半年後の目標設定の提案'
-};
-
-function runPresetAnalysis(type){
-  document.getElementById('ai-query').value=PRESET_PROMPTS[type]||'';
-  if(type==='hr')document.getElementById('ai-include-hr').checked=true;
-  runFreeAnalysis();
-}
-
-async function runFreeAnalysis(){
-  var query=document.getElementById('ai-query').value.trim();
-  if(!query){showToast('質問を入力してください');return;}
-  if(!GEMINI_API_KEY){showToast('Gemini APIキーが必要です');return;}
-
-  var includeHr=document.getElementById('ai-include-hr').checked;
-  var history=document.getElementById('ai-analysis-history');
-
-  // Add loading card
-  var loadingId='ai-loading-'+Date.now();
-  var loadingCard='<div class="card" id="'+loadingId+'"><div class="loading-state" style="padding:24px"><div class="spinner"></div><div style="font-size:.85em">全データを分析中...</div></div></div>';
-  history.insertAdjacentHTML('afterbegin',loadingCard);
-
-  var ctx=buildFullContext(includeHr);
-  var prompt=ctx+'\n\n---\n\n## 質問\n'+query+'\n\n日本語で、具体的な数値や名前を挙げて回答してください。';
-
-  try{
-    var body={
-      contents:[{parts:[{text:prompt}]}],
-      generationConfig:{temperature:0.3,maxOutputTokens:8192}
-    };
-    var res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+GEMINI_API_KEY,{
-      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
-    });
-    var loadEl=document.getElementById(loadingId);
-    if(!res.ok){
-      var errBody='';try{errBody=JSON.stringify(await res.json())}catch(x){}
-      if(loadEl)loadEl.innerHTML='<div class="card" style="color:#c0392b;font-size:.85em">API エラー: HTTP '+res.status+'<br>'+escapeHtml(errBody)+'</div>';
-      return;
-    }
-    var data=await res.json();
-    if(!data.candidates||!data.candidates.length){
-      if(loadEl)loadEl.innerHTML='<div class="card" style="color:#c0392b;font-size:.85em">回答を得られませんでした</div>';
-      return;
-    }
-    var answer=data.candidates[0].content.parts[0].text;
-    var html=escapeHtml(answer).replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>');
-    var now=new Date();var timeStr=(now.getMonth()+1)+'/'+now.getDate()+' '+now.getHours()+':'+String(now.getMinutes()).padStart(2,'0');
-
-    var resultCard='<div class="card"><h2 style="font-size:.9em">&#129302; '+escapeHtml(query.substring(0,50))+(query.length>50?'...':'')+'<span style="font-size:.75em;color:#8a9e92;font-weight:400;margin-left:auto">'+timeStr+'</span></h2>';
-    resultCard+='<div style="font-size:.85em;line-height:1.8;color:#1a3a2a">'+html+'</div></div>';
-
-    if(loadEl)loadEl.outerHTML=resultCard;
-  }catch(e){
-    var loadEl=document.getElementById(loadingId);
-    if(loadEl)loadEl.innerHTML='<div class="card" style="color:#c0392b;font-size:.85em">エラー: '+escapeHtml(e.message)+'</div>';
-    console.error(e);
-  }
-}
-
 // ==================== Business Card Scan ====================
 // Normalize image orientation via canvas (applies EXIF rotation)
 function normalizeImage(file,maxSize){
