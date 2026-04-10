@@ -103,8 +103,9 @@ textarea.form-input{resize:vertical;min-height:80px}
 
 /* Dashboard */
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:20px}
-.stat-card{background:#fff;border-radius:14px;padding:16px;text-align:center;box-shadow:0 1px 4px rgba(26,46,36,.06)}
-.stat-card .stat-value{font-size:1.8em;font-weight:800;color:#1a6b4a}
+.stat-card{background:#fff;border-radius:14px;padding:16px;text-align:center;box-shadow:0 1px 4px rgba(26,46,36,.06);overflow:hidden}
+.stat-card .stat-value{font-size:1.8em;font-weight:800;color:#1a6b4a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stat-card .stat-value.compact{font-size:1.2em}
 .stat-card .stat-label{font-size:.75em;color:#5a7a6a;margin-top:2px}
 .stat-card.accent{background:linear-gradient(135deg,#1a6b4a,#0d4a30);color:#fff}
 .stat-card.accent .stat-value{color:#fff}
@@ -442,6 +443,9 @@ textarea.form-input{resize:vertical;min-height:80px}
           <option value="email">メール</option>
           <option value="meeting">打合せ</option>
           <option value="other">その他</option>
+        </select>
+        <select class="form-input" id="activity-assignee-filter" onchange="renderActivities()" style="width:auto;padding:6px 10px;font-size:.8em">
+          <option value="all">全担当</option>
         </select>
         <div style="flex:1"></div>
         <button class="btn-small" onclick="showActivityForm()">+ 記録</button>
@@ -991,10 +995,88 @@ async function generateDocument(dealId,docType){
     // Deal name as subject
     addCell('B5',deal.name||'');
 
+    // --- Line items ---
+    var lineItems=parseDealLineItems(deal.lineItems);
+    var TEMPLATE_ITEM_ROWS=8; // rows 13-20 in template
+    var ITEM_START_ROW=13; // 1-based row number
+
+    // Calculate total rows needed: each item = 1 data row + 1 optional desc row
+    var totalRowsNeeded=0;
+    lineItems.forEach(function(li){totalRowsNeeded++;if(li.desc)totalRowsNeeded++;});
+
+    // Get sheet ID for batchUpdate requests
+    var sheetId=(sheetMeta.sheets&&sheetMeta.sheets[0])?sheetMeta.sheets[0].properties.sheetId:0;
+
+    // Insert extra rows if needed
+    var extraRows=totalRowsNeeded-TEMPLATE_ITEM_ROWS;
+    if(extraRows>0){
+      await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+':batchUpdate',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({requests:[{insertDimension:{range:{sheetId:sheetId,dimension:'ROWS',startIndex:ITEM_START_ROW-1+TEMPLATE_ITEM_ROWS,endIndex:ITEM_START_ROW-1+TEMPLATE_ITEM_ROWS+extraRows},inheritFromBefore:true}}]})
+      });
+    }
+
+    // Write line item data
+    var curRow=ITEM_START_ROW;
+    var itemNo=1;
+    lineItems.forEach(function(li){
+      var r=curRow;
+      // No. | 商品名 | (merged B-E) | 数量(F) | 単位(G) | 単価(H) | 金額(I)=F*H | 消費税(J) | ※(K)
+      addCell('A'+r,itemNo);
+      addCell('B'+r,li.name||'');
+      if(li.qty)addCell('F'+r,Number(li.qty));
+      if(li.unit)addCell('G'+r,li.unit);
+      if(li.unitPrice)addCell('H'+r,Number(li.unitPrice));
+      // Use USER_ENTERED for formulas below
+      curRow++;
+      if(li.desc){addCell('B'+curRow,li.desc);curRow++;}
+      itemNo++;
+    });
+
+    // Determine end of item area
+    var itemEndRow=ITEM_START_ROW+Math.max(totalRowsNeeded,TEMPLATE_ITEM_ROWS)-1;
+    var subtotalRow=itemEndRow+1; // was row 21 in template
+
     if(updates.length){
       await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+'/values:batchUpdate',{
         method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({valueInputOption:'RAW',data:updates})
+      });
+    }
+
+    // Write formulas with USER_ENTERED (金額=F*H, 消費税=I*税率, SUM)
+    var formulaUpdates=[];
+    function addFormula(cell,val){formulaUpdates.push({range:firstSheet+'!'+cell,values:[[val]]});}
+    curRow=ITEM_START_ROW;
+    lineItems.forEach(function(li){
+      var r=curRow;
+      addFormula('I'+r,'=F'+r+'*H'+r);
+      if(li.taxRate===8){
+        addFormula('J'+r,'=I'+r+'*0.08');
+        addFormula('K'+r,'※');
+      }else{
+        addFormula('J'+r,'=I'+r+'*0.1');
+      }
+      curRow++;
+      if(li.desc)curRow++;
+    });
+    // Update subtotal formulas
+    addFormula('H'+subtotalRow,'=SUM(I'+ITEM_START_ROW+':I'+itemEndRow+')');
+    addFormula('J'+subtotalRow,'=SUM(J'+ITEM_START_ROW+':J'+itemEndRow+')');
+    // Tax summary rows (subtotalRow+2=8%, subtotalRow+3=10%, subtotalRow+4=合計)
+    var tax8Row=subtotalRow+2;
+    var tax10Row=subtotalRow+3;
+    var totalRow=subtotalRow+4;
+    addFormula('I'+tax8Row,'=SUMPRODUCT((K'+ITEM_START_ROW+':K'+itemEndRow+'="※")*(J'+ITEM_START_ROW+':J'+itemEndRow+'))');
+    addFormula('I'+tax10Row,'=J'+subtotalRow+'-I'+tax8Row);
+    addFormula('I'+totalRow,'=H'+subtotalRow+'+J'+subtotalRow);
+    // A9: unit label + total
+    addFormula('C'+9,'=I'+totalRow);
+
+    if(formulaUpdates.length){
+      await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+'/values:batchUpdate',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({valueInputOption:'USER_ENTERED',data:formulaUpdates})
       });
     }
 
@@ -1770,8 +1852,9 @@ async function deleteCustomer(id){
 }
 
 // ==================== Deals ====================
-var DEAL_FIELDS=['id','customerId','company','name','status','amount','amountUnit','assignee','startDate','deadline','memo','updatedAt'];
+var DEAL_FIELDS=['id','customerId','company','name','status','amount','amountUnit','assignee','startDate','deadline','memo','updatedAt','lineItems'];
 var AMOUNT_UNITS=['','月','年','式','日','台','個'];
+var LINE_ITEM_UNITS=['式','月','年','日','台','個','回','回/月','人','人月','時間','kg','本','枚','セット','件'];
 
 function getStatusLabel(key){var s=DEAL_STATUSES.find(function(x){return x.key===key});return s?s.label:key;}
 
@@ -1830,6 +1913,61 @@ function renderDealPipeline(list,containerId){
   document.getElementById(containerId).innerHTML=h;
 }
 
+function parseDealLineItems(raw){
+  if(!raw)return [];
+  try{return JSON.parse(raw);}catch(e){return [];}
+}
+function renderLineItemRows(items){
+  var h='';
+  if(!items.length)items=[{name:'',desc:'',qty:'',unit:'月',unitPrice:'',taxRate:10}];
+  for(var i=0;i<items.length;i++){
+    var it=items[i];
+    h+='<div class="line-item-row" data-idx="'+i+'" style="background:#f5f9f7;border-radius:10px;padding:10px;margin-bottom:8px">';
+    h+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">';
+    h+='<span style="font-size:.75em;font-weight:700;color:#5a7a6a;min-width:24px">'+(i+1)+'.</span>';
+    h+='<input class="form-input li-name" placeholder="商品名・摘要" value="'+escapeAttr(it.name||'')+'" style="flex:1;padding:6px 10px;font-size:.85em">';
+    h+='<button type="button" class="btn-icon" onclick="removeLineItemRow('+i+')" style="color:#c0392b;font-size:.9em" title="削除">&#10005;</button>';
+    h+='</div>';
+    h+='<div style="display:grid;grid-template-columns:1fr 70px 1fr 60px;gap:6px;margin-bottom:4px">';
+    h+='<input class="form-input li-qty" type="number" step="any" placeholder="数量" value="'+(it.qty||'')+'" style="padding:6px 10px;font-size:.85em">';
+    h+='<select class="form-input li-unit" style="padding:4px 6px;font-size:.8em">';
+    LINE_ITEM_UNITS.forEach(function(u){h+='<option value="'+u+'"'+((it.unit||'式')===u?' selected':'')+'>'+u+'</option>';});
+    h+='</select>';
+    h+='<input class="form-input li-price" type="number" step="any" placeholder="単価" value="'+(it.unitPrice||'')+'" style="padding:6px 10px;font-size:.85em">';
+    h+='<select class="form-input li-tax" style="padding:4px 6px;font-size:.8em"><option value="10"'+(String(it.taxRate)==='8'?'':' selected')+'>10%</option><option value="8"'+(String(it.taxRate)==='8'?' selected':'')+'>8%※</option></select>';
+    h+='</div>';
+    h+='<input class="form-input li-desc" placeholder="備考（任意）" value="'+escapeAttr(it.desc||'')+'" style="padding:6px 10px;font-size:.8em;color:#5a7a6a">';
+    h+='</div>';
+  }
+  return h;
+}
+function addLineItemRow(){
+  var c=document.getElementById('line-items-container');
+  var existing=collectLineItems();
+  existing.push({name:'',desc:'',qty:'',unit:'月',unitPrice:'',taxRate:10});
+  c.innerHTML=renderLineItemRows(existing);
+}
+function removeLineItemRow(idx){
+  var items=collectLineItems();
+  items.splice(idx,1);
+  var c=document.getElementById('line-items-container');
+  c.innerHTML=renderLineItemRows(items);
+}
+function collectLineItems(){
+  var rows=document.querySelectorAll('.line-item-row');
+  var items=[];
+  rows.forEach(function(row){
+    var name=(row.querySelector('.li-name')||{}).value||'';
+    var desc=(row.querySelector('.li-desc')||{}).value||'';
+    var qty=(row.querySelector('.li-qty')||{}).value||'';
+    var unit=(row.querySelector('.li-unit')||{}).value||'';
+    var unitPrice=(row.querySelector('.li-price')||{}).value||'';
+    var taxRate=(row.querySelector('.li-tax')||{}).value||'10';
+    items.push({name:name.trim(),desc:desc.trim(),qty:qty,unit:unit,unitPrice:unitPrice,taxRate:Number(taxRate)});
+  });
+  return items;
+}
+
 function showDealForm(editId,preCustomerId){
   var d=editId?deals.find(function(x){return x.id===editId}):null;
   document.getElementById('modal-title').textContent=d?'案件を編集':'新規案件';
@@ -1855,6 +1993,14 @@ function showDealForm(editId,preCustomerId){
   h+='<div class="form-group"><label>開始日</label><input class="form-input" id="f-startdate" type="date" value="'+escapeAttr(d?d.startDate:todayStr())+'"></div>';
   h+='<div class="form-group"><label>期限</label><input class="form-input" id="f-deadline" type="date" value="'+escapeAttr(d?d.deadline:'')+'"></div></div>';
   h+='<div class="form-group"><label>メモ</label><textarea class="form-input" id="f-dealmemo">'+escapeHtml(d?d.memo:'')+'</textarea></div>';
+  // Line items
+  var items=(d&&d.lineItems)?parseDealLineItems(d.lineItems):[];
+  h+='<div class="form-group"><label>明細</label>';
+  h+='<div id="line-items-container">';
+  h+=renderLineItemRows(items);
+  h+='</div>';
+  h+='<button type="button" class="btn-text" onclick="addLineItemRow()" style="margin-top:4px">+ 明細行を追加</button>';
+  h+='</div>';
   h+='<button class="btn-primary" type="submit">'+(d?'更新':'登録')+'</button></form>';
   document.getElementById('modal-body').innerHTML=h;
   openModal();
@@ -1872,12 +2018,21 @@ async function saveDeal(e,editId){
     status:document.getElementById('f-status').value,
     amount:document.getElementById('f-amount').value||0,
     amountUnit:document.getElementById('f-amountUnit').value||'',
+    lineItems:'',
     assignee:document.getElementById('f-assignee').value.trim(),
     startDate:document.getElementById('f-startdate').value,
     deadline:document.getElementById('f-deadline').value,
     memo:document.getElementById('f-dealmemo').value.trim(),
     updatedAt:todayStr()
   };
+  // Collect line items and auto-calc amount
+  var li=collectLineItems().filter(function(x){return x.name;});
+  if(li.length){
+    obj.lineItems=JSON.stringify(li);
+    var total=0;
+    li.forEach(function(x){total+=(Number(x.qty)||0)*(Number(x.unitPrice)||0);});
+    if(total>0)obj.amount=total;
+  }
   try{
     if(editId){
       var idx=deals.findIndex(function(x){return x.id===editId});
@@ -1903,6 +2058,26 @@ function showDealDetail(id){
   if(d.memo)h+='<span style="color:#5a7a6a">メモ</span><span>'+escapeHtml(d.memo)+'</span>';
   h+='<span style="color:#5a7a6a">更新日</span><span>'+formatDate(d.updatedAt)+'</span>';
   h+='</div>';
+
+  // Line items display
+  var li=parseDealLineItems(d.lineItems);
+  if(li.length){
+    h+='<div style="margin-bottom:16px"><label style="font-size:.8em;font-weight:600;color:#3a5a4a;display:block;margin-bottom:6px">明細</label>';
+    h+='<table style="width:100%;border-collapse:collapse;font-size:.8em"><tr style="background:#f0f5f2"><th style="padding:4px 8px;text-align:left">商品名</th><th style="padding:4px 8px;text-align:right">数量</th><th style="padding:4px 8px">単位</th><th style="padding:4px 8px;text-align:right">単価</th><th style="padding:4px 8px;text-align:right">金額</th><th style="padding:4px 8px;text-align:right">税</th></tr>';
+    var subTotal=0;
+    li.forEach(function(x,i){
+      var amt=(Number(x.qty)||0)*(Number(x.unitPrice)||0);
+      subTotal+=amt;
+      h+='<tr style="border-bottom:1px solid #e8f0ec"><td style="padding:4px 8px">'+escapeHtml(x.name)+(x.desc?'<div style="color:#5a7a6a;font-size:.9em">'+escapeHtml(x.desc)+'</div>':'')+'</td>';
+      h+='<td style="padding:4px 8px;text-align:right">'+escapeHtml(x.qty||'')+'</td>';
+      h+='<td style="padding:4px 8px;text-align:center">'+escapeHtml(x.unit||'')+'</td>';
+      h+='<td style="padding:4px 8px;text-align:right">'+(x.unitPrice?Number(x.unitPrice).toLocaleString('ja-JP'):'')+'</td>';
+      h+='<td style="padding:4px 8px;text-align:right;font-weight:600">'+(amt?amt.toLocaleString('ja-JP'):'')+'</td>';
+      h+='<td style="padding:4px 8px;text-align:right">'+x.taxRate+'%</td></tr>';
+    });
+    h+='<tr style="border-top:2px solid #d0ddd6"><td colspan="4" style="padding:4px 8px;text-align:right;font-weight:600">小計</td><td style="padding:4px 8px;text-align:right;font-weight:700">'+subTotal.toLocaleString('ja-JP')+'円</td><td></td></tr>';
+    h+='</table></div>';
+  }
 
   // Status change buttons
   h+='<div style="margin-bottom:16px"><label style="font-size:.8em;font-weight:600;color:#3a5a4a;display:block;margin-bottom:6px">ステータス変更</label><div style="display:flex;flex-wrap:wrap;gap:4px">';
@@ -1951,11 +2126,22 @@ async function deleteDeal(id){
 }
 
 // ==================== Activities ====================
-var ACTIVITY_FIELDS=['id','customerId','company','dealId','type','content','assignee','datetime'];
+var ACTIVITY_FIELDS=['id','customerId','company','dealId','type','content','assignee','datetime','photoUrl'];
 
 function renderActivities(){
   var filter=document.getElementById('activity-filter').value;
-  var filtered=activities.filter(function(a){return filter==='all'||a.type===filter;});
+  var assigneeFilter=document.getElementById('activity-assignee-filter');
+  // Populate assignee filter dynamically
+  var assignees={};activities.forEach(function(a){if(a.assignee)assignees[a.assignee]=true;});
+  var currentAssignee=assigneeFilter.value;
+  var ah='<option value="all">全担当</option>';
+  Object.keys(assignees).sort().forEach(function(n){ah+='<option value="'+escapeAttr(n)+'"'+(currentAssignee===n?' selected':'')+'>'+escapeHtml(n)+'</option>';});
+  assigneeFilter.innerHTML=ah;
+  var filtered=activities.filter(function(a){
+    if(filter!=='all'&&a.type!==filter)return false;
+    if(currentAssignee!=='all'&&a.assignee!==currentAssignee)return false;
+    return true;
+  });
   filtered.sort(function(a,b){return (b.datetime||'').localeCompare(a.datetime||'');});
   if(!filtered.length){
     document.getElementById('activity-list').innerHTML='';
@@ -1965,20 +2151,47 @@ function renderActivities(){
   var h='';
   filtered.forEach(function(a){
     var at=ACTIVITY_TYPES.find(function(t){return t.key===a.type})||{icon:'\u{1F4DD}',label:a.type};
-    h+='<div class="activity-item">';
+    h+='<div class="activity-item" onclick="showActivityDetail(\''+escapeAttr(a.id)+'\')" style="cursor:pointer">';
     h+='<div class="activity-icon">'+at.icon+'</div>';
     h+='<div class="activity-body">';
     h+='<div class="activity-title">'+escapeHtml(a.content.substring(0,100))+'</div>';
-    h+='<div class="activity-meta">'+escapeHtml(a.company)+(a.assignee?' | '+escapeHtml(a.assignee):'')+(a.datetime?' | '+formatDate(a.datetime):'')+'</div>';
+    h+='<div class="activity-meta">'+escapeHtml(a.company)+(a.assignee?' | '+escapeHtml(a.assignee):'')+(a.datetime?' | '+formatDate(a.datetime):'')+(a.photoUrl?' | &#128247;':'')+'</div>';
     h+='</div>';
-    h+='<button class="btn-icon btn-danger" onclick="deleteActivity(\''+escapeAttr(a.id)+'\')" style="font-size:.7em">&#128465;</button>';
     h+='</div>';
   });
   document.getElementById('activity-list').innerHTML=h;
 }
 
-function showActivityForm(preCustomerId,preDealId){
-  document.getElementById('modal-title').textContent='活動を記録';
+function showActivityDetail(id){
+  var a=activities.find(function(x){return x.id===id});if(!a)return;
+  var at=ACTIVITY_TYPES.find(function(t){return t.key===a.type})||{icon:'\u{1F4DD}',label:a.type};
+  var cust=customers.find(function(c){return c.id===a.customerId});
+  var deal=a.dealId?deals.find(function(d){return d.id===a.dealId}):null;
+  var h='<h2>'+at.icon+' '+escapeHtml(at.label)+'<div>';
+  h+='<button class="btn-icon" onclick="closeDetail();showEditActivityForm(\''+escapeAttr(id)+'\')">&#9998;</button>';
+  h+='<button class="btn-icon btn-danger" onclick="deleteActivity(\''+escapeAttr(id)+'\')">&#128465;</button></div></h2>';
+  h+='<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.9em;margin-bottom:16px">';
+  h+='<span style="color:#5a7a6a">日時</span><span>'+formatDate(a.datetime)+'</span>';
+  if(a.company)h+='<span style="color:#5a7a6a">顧客</span><span style="font-weight:600;cursor:pointer" onclick="closeDetail();showCustomerDetail(\''+escapeAttr(a.customerId)+'\')">'+escapeHtml(a.company)+'</span>';
+  if(deal)h+='<span style="color:#5a7a6a">案件</span><span style="cursor:pointer" onclick="closeDetail();showDealDetail(\''+escapeAttr(deal.id)+'\')">'+escapeHtml(deal.name)+'</span>';
+  if(a.assignee)h+='<span style="color:#5a7a6a">担当</span><span>'+escapeHtml(a.assignee)+'</span>';
+  h+='</div>';
+  h+='<div style="background:#f5f9f7;border-radius:10px;padding:14px;font-size:.9em;white-space:pre-wrap;line-height:1.7">'+escapeHtml(a.content)+'</div>';
+  if(a.photoUrl){
+    h+='<div style="margin-top:12px"><img src="'+escapeAttr(a.photoUrl)+'" style="max-width:100%;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.1)" onclick="window.open(this.src,\'_blank\')"></div>';
+  }
+  document.getElementById('detail-content').innerHTML=h;
+  document.getElementById('detail-overlay').classList.add('active');
+}
+
+function showEditActivityForm(id){
+  var a=activities.find(function(x){return x.id===id});if(!a)return;
+  showActivityForm(a.customerId,a.dealId,id);
+}
+
+function showActivityForm(preCustomerId,preDealId,editId){
+  var existing=editId?activities.find(function(x){return x.id===editId}):null;
+  document.getElementById('modal-title').textContent=existing?'活動を編集':'活動を記録';
   var custOptions='<option value="">-- 選択 --</option>';
   customers.forEach(function(c){
     var sel=preCustomerId===c.id?'selected':'';
@@ -1991,39 +2204,78 @@ function showActivityForm(preCustomerId,preDealId){
   });
   var typeOptions='';
   ACTIVITY_TYPES.forEach(function(t){
-    typeOptions+='<option value="'+t.key+'">'+t.icon+' '+t.label+'</option>';
+    typeOptions+='<option value="'+t.key+'"'+(existing&&existing.type===t.key?' selected':'')+'>'+t.icon+' '+t.label+'</option>';
   });
-  var h='<form onsubmit="saveActivity(event);return false">';
+  var h='<form onsubmit="saveActivity(event,\''+(editId||'')+'\');return false">';
   h+='<div class="form-group"><label>顧客</label><select class="form-input" id="f-actcust">'+custOptions+'</select></div>';
   h+='<div class="form-group"><label>案件</label><select class="form-input" id="f-actdeal">'+dealOptions+'</select></div>';
   h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
   h+='<div class="form-group"><label>種別</label><select class="form-input" id="f-acttype">'+typeOptions+'</select></div>';
-  h+='<div class="form-group"><label>日時</label><input class="form-input" id="f-actdate" type="date" value="'+todayStr()+'"></div></div>';
-  h+='<div class="form-group"><label>内容 *</label><textarea class="form-input" id="f-actcontent" required placeholder="活動内容を入力..."></textarea></div>';
-  h+='<div class="form-group"><label>担当者</label><input class="form-input" id="f-actassignee" value="'+escapeAttr(currentUser.name)+'"></div>';
-  h+='<button class="btn-primary" type="submit">記録</button></form>';
+  h+='<div class="form-group"><label>日時</label><input class="form-input" id="f-actdate" type="date" value="'+escapeAttr(existing?existing.datetime:todayStr())+'"></div></div>';
+  h+='<div class="form-group"><label>内容 *</label><textarea class="form-input" id="f-actcontent" required placeholder="活動内容を入力...">'+escapeHtml(existing?existing.content:'')+'</textarea></div>';
+  h+='<div class="form-group"><label>担当者</label><input class="form-input" id="f-actassignee" value="'+escapeAttr(existing?existing.assignee:currentUser.name)+'"></div>';
+  // Photo
+  h+='<div class="form-group"><label>写真</label>';
+  h+='<input type="file" id="f-actphoto" accept="image/*" style="font-size:.85em">';
+  if(existing&&existing.photoUrl)h+='<div style="margin-top:6px"><img src="'+escapeAttr(existing.photoUrl)+'" style="max-width:120px;border-radius:8px"></div>';
+  h+='</div>';
+  h+='<button class="btn-primary" type="submit">'+(existing?'更新':'記録')+'</button></form>';
   document.getElementById('modal-body').innerHTML=h;
   openModal();
 }
 
-async function saveActivity(e){
+async function saveActivity(e,editId){
   e.preventDefault();
   var custId=document.getElementById('f-actcust').value;
   var cust=customers.find(function(x){return x.id===custId})||{};
   var dealId=document.getElementById('f-actdeal').value;
+  var existing=editId?activities.find(function(x){return x.id===editId}):null;
   var obj={
-    id:generateId(),
+    id:editId||generateId(),
     customerId:custId,
     company:cust.company||'',
     dealId:dealId,
     type:document.getElementById('f-acttype').value,
     content:document.getElementById('f-actcontent').value.trim(),
     assignee:document.getElementById('f-actassignee').value.trim(),
-    datetime:document.getElementById('f-actdate').value
+    datetime:document.getElementById('f-actdate').value,
+    photoUrl:(existing&&existing.photoUrl)||''
   };
+
+  // Upload photo if selected
+  var photoInput=document.getElementById('f-actphoto');
+  if(photoInput&&photoInput.files&&photoInput.files[0]){
+    var folderId=null;
+    if(cust&&cust.folderUrl){
+      var fm=cust.folderUrl.match(/folders\/([a-zA-Z0-9_-]+)/);
+      if(fm)folderId=fm[1];
+    }
+    if(folderId){
+      try{
+        var file=photoInput.files[0];
+        var reader=new FileReader();
+        var base64=await new Promise(function(resolve){
+          reader.onload=function(ev){
+            var dataUrl=ev.target.result;
+            resolve(dataUrl.split(',')[1]);
+          };
+          reader.readAsDataURL(file);
+        });
+        var ts=timestampForFile();
+        var uploaded=await uploadFileToFolder(folderId,'activity_'+ts+'.jpg',base64,file.type||'image/jpeg');
+        obj.photoUrl='https://drive.google.com/thumbnail?id='+uploaded.id+'&sz=w800';
+      }catch(ex){console.error('photo upload failed:',ex);}
+    }
+  }
+
   try{
-    activities.push(obj);await appendRow('活動',obj,ACTIVITY_FIELDS);
-    closeModal();renderActivities();showToast('記録しました');
+    if(editId){
+      var idx=activities.findIndex(function(x){return x.id===editId});
+      if(idx>=0){activities[idx]=obj;await updateRow('活動',idx,obj,ACTIVITY_FIELDS);}
+    }else{
+      activities.push(obj);await appendRow('活動',obj,ACTIVITY_FIELDS);
+    }
+    closeModal();renderActivities();showToast(editId?'更新しました':'記録しました');
   }catch(e){showToast('保存に失敗しました');console.error(e);}
 }
 
@@ -2049,8 +2301,8 @@ function renderDashboard(){
   var sh='';
   sh+='<div class="stat-card"><div class="stat-value">'+totalCustomers+'</div><div class="stat-label">顧客数</div></div>';
   sh+='<div class="stat-card"><div class="stat-value">'+activeDeals.length+'</div><div class="stat-label">進行中案件</div></div>';
-  sh+='<div class="stat-card accent"><div class="stat-value">'+formatCurrency(totalPipeline).replace('円','')+'</div><div class="stat-label">パイプライン</div></div>';
-  sh+='<div class="stat-card"><div class="stat-value">'+formatCurrency(totalOrdered).replace('円','')+'</div><div class="stat-label">受注済み</div></div>';
+  sh+='<div class="stat-card accent"><div class="stat-value compact">'+formatCurrency(totalPipeline).replace('円','')+'</div><div class="stat-label">パイプライン</div></div>';
+  sh+='<div class="stat-card"><div class="stat-value compact">'+formatCurrency(totalOrdered).replace('円','')+'</div><div class="stat-label">受注済み</div></div>';
   sh+='<div class="stat-card"><div class="stat-value">'+monthActivities+'</div><div class="stat-label">今月の活動</div></div>';
   sh+='<div class="stat-card"><div class="stat-value">'+deals.filter(function(d){return d.status==='paid'}).length+'</div><div class="stat-label">入金済み</div></div>';
   document.getElementById('dashboard-stats').innerHTML=sh;
