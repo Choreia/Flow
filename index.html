@@ -339,6 +339,23 @@ textarea.form-input{resize:vertical;min-height:80px}
       <button class="btn-small" id="folder-sync-btn" onclick="bulkSyncCustomerFolders()" style="margin-top:8px;width:100%">全顧客のフォルダを同期（既存マッチ＋新規作成）</button>
       <div id="folder-sync-status" style="font-size:.8em;color:#5a7a6a;margin-top:4px"></div>
       <hr style="border:none;border-top:1px solid #e0e8e4;margin:16px 0">
+      <h3 style="font-size:.85em;margin-bottom:6px">帳票テンプレート</h3>
+      <p style="font-size:.8em;color:#5a7a6a;margin-bottom:8px">見積書・納品書・請求書のテンプレートとなるGoogleスプレッドシートのIDまたはURL</p>
+      <div style="display:flex;gap:8px;margin-bottom:6px">
+        <label style="font-size:.8em;min-width:50px;padding-top:8px">見積書</label>
+        <input class="form-input" id="tpl-quote-input" placeholder="スプレッドシートID または URL" style="flex:1">
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:6px">
+        <label style="font-size:.8em;min-width:50px;padding-top:8px">納品書</label>
+        <input class="form-input" id="tpl-delivery-input" placeholder="スプレッドシートID または URL" style="flex:1">
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:6px">
+        <label style="font-size:.8em;min-width:50px;padding-top:8px">請求書</label>
+        <input class="form-input" id="tpl-invoice-input" placeholder="スプレッドシートID または URL" style="flex:1">
+      </div>
+      <button class="btn-small" onclick="saveDocTemplates()">テンプレート保存</button>
+      <div id="tpl-status" style="font-size:.8em;color:#5a7a6a;margin-top:4px"></div>
+      <hr style="border:none;border-top:1px solid #e0e8e4;margin:16px 0">
       <h3 style="font-size:.85em;margin-bottom:6px">人事評価シート</h3>
       <p style="font-size:.8em;color:#5a7a6a;margin-bottom:8px">人事フォルダに評価用スプレッドシートを作成します（管理者のみ閲覧）</p>
       <div id="hr-setup-status" style="font-size:.85em;margin-bottom:8px"></div>
@@ -825,7 +842,7 @@ function getAdmins(){if(!orgConfig)return[];return orgConfig.admins||[orgConfig.
 function toggleAdminPanel(){
   var p=document.getElementById('admin-panel');var visible=p.style.display!=='none';
   p.style.display=visible?'none':'';
-  if(!visible){renderAdminList();loadGeminiKey();loadCustomerSpreadsheetId();loadCustomerFolderParent();loadHrSetupStatus();}
+  if(!visible){renderAdminList();loadGeminiKey();loadCustomerSpreadsheetId();loadCustomerFolderParent();loadDocTemplates();loadHrSetupStatus();}
 }
 function renderAdminList(){
   var admins=getAdmins();var h='';
@@ -895,6 +912,133 @@ async function saveCustomerFolderParent(){
     document.getElementById('customer-folder-status').textContent=id?'保存しました':'クリアしました';
     showToast('保存しました');
   }catch(e){showToast('保存に失敗しました');console.error(e);}
+}
+
+function extractSpreadsheetId(raw){
+  var m=raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  return m?m[1]:raw.trim();
+}
+function loadDocTemplates(){
+  var q=document.getElementById('tpl-quote-input');
+  var d=document.getElementById('tpl-delivery-input');
+  var inv=document.getElementById('tpl-invoice-input');
+  if(!q)return;
+  q.value=orgConfig.tplQuote||'';
+  d.value=orgConfig.tplDelivery||'';
+  inv.value=orgConfig.tplInvoice||'';
+  var s=document.getElementById('tpl-status');
+  s.textContent=(orgConfig.tplQuote||orgConfig.tplDelivery||orgConfig.tplInvoice)?'設定済み':'未設定';
+}
+async function saveDocTemplates(){
+  orgConfig.tplQuote=extractSpreadsheetId(document.getElementById('tpl-quote-input').value);
+  orgConfig.tplDelivery=extractSpreadsheetId(document.getElementById('tpl-delivery-input').value);
+  orgConfig.tplInvoice=extractSpreadsheetId(document.getElementById('tpl-invoice-input').value);
+  try{await saveConfig();document.getElementById('tpl-status').textContent='保存しました';showToast('保存しました');}
+  catch(e){showToast('保存に失敗しました');console.error(e);}
+}
+
+// ==================== Document generation (見積書/納品書/請求書) ====================
+var DOC_TYPES={
+  quote:{label:'見積書',prefix:'q',configKey:'tplQuote'},
+  delivery:{label:'納品書',prefix:'d',configKey:'tplDelivery'},
+  invoice:{label:'請求書',prefix:'i',configKey:'tplInvoice'}
+};
+
+async function generateDocument(dealId,docType){
+  var dt=DOC_TYPES[docType];
+  if(!dt){showToast('不明な帳票タイプ');return;}
+  var deal=deals.find(function(x){return x.id===dealId});
+  if(!deal){showToast('案件が見つかりません');return;}
+  var cust=customers.find(function(x){return x.id===deal.customerId})||{};
+  var tplId=orgConfig&&orgConfig[dt.configKey];
+  if(!tplId){showToast(dt.label+'テンプレートが未設定です（設定画面で登録してください）');return;}
+
+  try{
+    showToast(dt.label+'を作成中...');
+
+    // Generate document number: custId-prefix-serial
+    var existingDocs=(activities||[]).filter(function(a){
+      return a.customerId===cust.id&&a.type==='other'&&(a.content||'').indexOf('['+dt.label+']')===0;
+    });
+    var serial=String(existingDocs.length+1).padStart(5,'0');
+    var docNum=(cust.id||'000000')+'-'+dt.prefix+'-'+serial;
+    var dateStr=todayStr().replace(/-/g,'');
+    var custName=(cust.company||'不明').replace(/[\\\/:*?"<>|]/g,'_');
+    var fileName=cust.id+'_御'+dt.label+'_'+custName+'_'+dateStr;
+
+    // 1. Copy the template spreadsheet
+    var copy=await apiFetch('https://www.googleapis.com/drive/v3/files/'+tplId+'/copy?supportsAllDrives=true',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:fileName})
+    });
+    var newId=copy.id;
+
+    // 2. Fill in data via Sheets API batchUpdate
+    var sheetMeta=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+'?fields=sheets.properties');
+    var firstSheet=(sheetMeta.sheets&&sheetMeta.sheets[0])?sheetMeta.sheets[0].properties.title:'Sheet1';
+
+    // Build cell updates matching the template layout
+    var updates=[];
+    function addCell(cell,val){updates.push({range:firstSheet+'!'+cell,values:[[val]]});}
+    // Company + contact
+    addCell('A2',(cust.company||'')+(cust.corpType?(' '+cust.corpType):''));
+    addCell('B3',cust.contact||'');
+    // Document number and date
+    addCell('I2',docNum);
+    addCell('I3',todayStr());
+    // Assignee
+    addCell('I9',deal.assignee||currentUser.name||'');
+    // Deal name as subject
+    addCell('B5',deal.name||'');
+
+    if(updates.length){
+      await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+'/values:batchUpdate',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({valueInputOption:'RAW',data:updates})
+      });
+    }
+
+    // 3. Move to customer folder if available
+    var folderId=null;
+    if(cust.folderUrl){
+      var fm=cust.folderUrl.match(/folders\/([a-zA-Z0-9_-]+)/);
+      if(fm)folderId=fm[1];
+    }
+    if(folderId){
+      // Get current parent, then move
+      var fileMeta=await apiFetch('https://www.googleapis.com/drive/v3/files/'+newId+'?fields=parents&supportsAllDrives=true');
+      var prevParents=(fileMeta.parents||[]).join(',');
+      await apiFetch('https://www.googleapis.com/drive/v3/files/'+newId+'?addParents='+folderId+'&removeParents='+prevParents+'&supportsAllDrives=true',{
+        method:'PATCH',headers:{'Content-Type':'application/json'},body:'{}'
+      });
+    }
+
+    // 4. Record activity
+    var docUrl='https://docs.google.com/spreadsheets/d/'+newId;
+    var actContent='['+dt.label+'] '+docNum+' '+deal.name+(deal.amount?' '+formatCurrency(deal.amount,deal.amountUnit):'');
+    var act={
+      id:generateId(),
+      customerId:cust.id||'',
+      company:cust.company||'',
+      dealId:dealId,
+      type:'other',
+      content:actContent,
+      assignee:currentUser.name||'',
+      datetime:new Date().toISOString().slice(0,16)
+    };
+    activities.push(act);
+    await appendRow('活動',act,ACTIVITY_FIELDS);
+
+    showToast(dt.label+'を作成しました');
+    // Open the document
+    window.open(docUrl,'_blank');
+    // Refresh views
+    renderActivities();
+    showDealDetail(dealId);
+  }catch(e){
+    console.error('generateDocument error:',e);
+    showToast(dt.label+'の作成に失敗しました: '+e.message);
+  }
 }
 
 // ==================== Drive folder helpers ====================
@@ -1766,6 +1910,13 @@ function showDealDetail(id){
     var active=d.status===s.key?' style="opacity:.4;cursor:default"':'';
     h+='<button class="status-badge '+s.key+'" onclick="changeDealStatus(\''+escapeAttr(id)+'\',\''+s.key+'\')" style="cursor:pointer;border:none;font-size:.8em;padding:6px 12px'+(d.status===s.key?';outline:2px solid #1a6b4a':'')+'"'+active+'>'+s.label+'</button>';
   });
+  h+='</div></div>';
+
+  // Document generation buttons
+  h+='<div style="margin-bottom:16px"><label style="font-size:.8em;font-weight:600;color:#3a5a4a;display:block;margin-bottom:6px">帳票作成</label><div style="display:flex;flex-wrap:wrap;gap:6px">';
+  h+='<button class="btn-small" onclick="generateDocument(\''+escapeAttr(id)+'\',\'quote\')" style="background:#2563eb">&#128196; 見積書</button>';
+  h+='<button class="btn-small" onclick="generateDocument(\''+escapeAttr(id)+'\',\'delivery\')" style="background:#059669">&#128230; 納品書</button>';
+  h+='<button class="btn-small" onclick="generateDocument(\''+escapeAttr(id)+'\',\'invoice\')" style="background:#7c3aed">&#128179; 請求書</button>';
   h+='</div></div>';
 
   // Related activities
