@@ -373,6 +373,8 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
         <input class="search-input" id="customer-search" placeholder="顧客を検索..." oninput="filterCustomers()" style="flex:1">
         <button class="btn-small" onclick="showCustomerForm()">+ 新規</button>
+        <button class="btn-small" onclick="document.getElementById('csv-file-input').click()" style="background:#2563eb">&#128196; CSV取込</button>
+        <input type="file" id="csv-file-input" accept=".csv,.tsv,.txt" style="display:none" onchange="handleCSVFile(this)">
       </div>
       <div class="card" style="padding:0;overflow:hidden;overflow-x:auto">
         <table class="data-table" id="customer-table">
@@ -1106,6 +1108,218 @@ function renderCustomers(){
   tbody.innerHTML=h;
 }
 function filterCustomers(){renderCustomers();}
+
+// ==================== CSV Import ====================
+var CSV_KNOWN_HEADERS={
+  '会社名':'company','名前':'company','社名':'company','Company':'company','company':'company','企業名':'company',
+  'カナ':'companyKana','会社カナ':'companyKana','フリガナ':'companyKana',
+  '法人格':'corpType',
+  '部署':'department','部署名':'department','Department':'department','department':'department',
+  '役職':'contactTitle','Title':'contactTitle','title':'contactTitle','所属':'contactTitle','肩書':'contactTitle','肩書き':'contactTitle',
+  '担当者':'contact','担当者名':'contact','氏名':'contact','名前':'contact','Name':'contact','name':'contact','姓名':'contact',
+  '姓':'_sei','名':'_mei','Last Name':'_sei','First Name':'_mei','last_name':'_sei','first_name':'_mei',
+  '郵便番号':'postalCode','Postal Code':'postalCode','zip':'postalCode','〒':'postalCode',
+  '都道府県':'prefecture','Prefecture':'prefecture','prefecture':'prefecture',
+  '市区町村':'city','City':'city','city':'city',
+  '住所':'address','Address':'address','address':'address','住所1':'address',
+  '建物':'building','建物名':'building','住所2':'building','ビル名':'building',
+  'TEL':'tel','電話番号':'tel','電話':'tel','Phone':'tel','phone':'tel','tel':'tel',
+  'FAX':'fax','fax':'fax','Fax':'fax',
+  '携帯':'contactMobile','携帯番号':'contactMobile','Mobile':'contactMobile','mobile':'contactMobile','携帯電話':'contactMobile',
+  'Email':'email','email':'email','メール':'email','メールアドレス':'email','E-mail':'email','E-Mail':'email','EMAIL':'email',
+  'URL':'url','url':'url','HP':'url','ホームページ':'url','Web':'url',
+  'サービス分類':'serviceType',
+  '種別':'category','種別タグ':'category','カテゴリ':'category',
+  '関係':'relation',
+  '社内担当':'assignee','担当':'assignee','営業担当':'assignee',
+  '与信':'credit',
+  'ステータス':'status',
+  '備考':'_memo','メモ':'_memo','Note':'_memo','note':'_memo','Notes':'_memo'
+};
+
+function parseCSVLine(line){
+  var result=[];var cell='';var inQuote=false;
+  for(var i=0;i<line.length;i++){
+    var ch=line[i];
+    if(inQuote){
+      if(ch==='"'){
+        if(i+1<line.length&&line[i+1]==='"'){cell+='"';i++;}
+        else inQuote=false;
+      }else cell+=ch;
+    }else{
+      if(ch==='"')inQuote=true;
+      else if(ch===','||ch==='\t'){result.push(cell);cell='';}
+      else cell+=ch;
+    }
+  }
+  result.push(cell);
+  return result;
+}
+
+function parseCSVText(text){
+  var lines=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+  while(lines.length&&!lines[lines.length-1].trim())lines.pop();
+  if(!lines.length)return{headers:[],rows:[]};
+  var headers=parseCSVLine(lines[0]);
+  var rows=[];
+  for(var i=1;i<lines.length;i++){
+    var line=lines[i].trim();
+    if(!line)continue;
+    rows.push(parseCSVLine(line));
+  }
+  return{headers:headers,rows:rows};
+}
+
+function handleCSVFile(input){
+  var file=input.files[0];
+  if(!file)return;
+  input.value='';
+  var reader=new FileReader();
+  reader.onload=function(e){
+    // Try UTF-8 first, if garbled, retry with Shift_JIS
+    var text=e.target.result;
+    var parsed=parseCSVText(text);
+    if(parsed.headers.length<2){showToast('CSVを解析できませんでした');return;}
+    showCSVMappingUI(parsed,file.name);
+  };
+  // Try UTF-8 first
+  var readerSjis=new FileReader();
+  readerSjis.onload=function(e){
+    var text=new TextDecoder('shift_jis').decode(e.target.result);
+    var parsedSjis=parseCSVText(text);
+    // Also parse as UTF-8
+    var readerUtf=new FileReader();
+    readerUtf.onload=function(e2){
+      var textUtf=e2.target.result;
+      var parsedUtf=parseCSVText(textUtf);
+      // Pick the one with more recognized headers
+      var scoreSjis=0,scoreUtf=0;
+      parsedSjis.headers.forEach(function(h){if(CSV_KNOWN_HEADERS[h.trim()])scoreSjis++;});
+      parsedUtf.headers.forEach(function(h){if(CSV_KNOWN_HEADERS[h.trim()])scoreUtf++;});
+      var parsed=scoreUtf>=scoreSjis?parsedUtf:parsedSjis;
+      if(parsed.headers.length<2){showToast('CSVを解析できませんでした');return;}
+      showCSVMappingUI(parsed,file.name);
+    };
+    readerUtf.readAsText(file,'UTF-8');
+  };
+  readerSjis.readAsArrayBuffer(file);
+}
+
+function showCSVMappingUI(parsed,fileName){
+  var headers=parsed.headers.map(function(h){return h.trim();});
+  var rows=parsed.rows;
+  // Auto-map
+  var mapping=[];
+  var fieldLabels={id:'顧客ID',serviceType:'サービス分類',category:'種別タグ',relation:'関係',company:'会社名',companyKana:'カナ',corpType:'法人格',corpPosition:'前/後',department:'部署',postalCode:'郵便番号',prefecture:'都道府県',city:'市区町村',address:'住所',building:'建物名',tel:'TEL',fax:'FAX',contact:'担当者名',contactTitle:'役職',contactMobile:'携帯',email:'Email',url:'URL',assignee:'社内担当',credit:'与信',status:'ステータス',_sei:'姓',_mei:'名',_memo:'備考'};
+  var allFields=['','company','companyKana','corpType','corpPosition','department','contact','_sei','_mei','contactTitle','contactMobile','tel','fax','email','url','postalCode','prefecture','city','address','building','serviceType','category','relation','assignee','credit','status','_memo'];
+  for(var i=0;i<headers.length;i++){
+    mapping.push(CSV_KNOWN_HEADERS[headers[i]]||'');
+  }
+  document.getElementById('modal-title').textContent='CSV取込 — '+escapeHtml(fileName);
+  var h='<div style="margin-bottom:12px;font-size:.85em;color:#3a5a4a">'+rows.length+'件のデータが見つかりました。列の対応を確認してください。</div>';
+  h+='<div style="overflow-x:auto;margin-bottom:16px"><table style="width:100%;border-collapse:collapse;font-size:.8em">';
+  h+='<tr><th style="padding:6px 8px;background:#f0f5f2;text-align:left;white-space:nowrap">CSV列名</th><th style="padding:6px 8px;background:#f0f5f2;text-align:left">サンプル</th><th style="padding:6px 8px;background:#f0f5f2;text-align:left">対応フィールド</th></tr>';
+  for(var i=0;i<headers.length;i++){
+    var sample=rows.length>0&&rows[0][i]?rows[0][i]:'';
+    if(sample.length>30)sample=sample.substring(0,30)+'...';
+    h+='<tr><td style="padding:6px 8px;border-bottom:1px solid #e8f0ec;font-weight:600;white-space:nowrap">'+escapeHtml(headers[i])+'</td>';
+    h+='<td style="padding:6px 8px;border-bottom:1px solid #e8f0ec;color:#5a7a6a;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(sample)+'</td>';
+    h+='<td style="padding:6px 8px;border-bottom:1px solid #e8f0ec"><select class="form-input csv-map-select" data-col="'+i+'" style="padding:4px 8px;font-size:.9em">';
+    h+='<option value="">(スキップ)</option>';
+    for(var j=1;j<allFields.length;j++){
+      var f=allFields[j];
+      h+='<option value="'+f+'"'+(mapping[i]===f?' selected':'')+'>'+escapeHtml(fieldLabels[f]||f)+'</option>';
+    }
+    h+='</select></td></tr>';
+  }
+  h+='</table></div>';
+  h+='<div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">';
+  h+='<label style="font-size:.8em;font-weight:600;color:#3a5a4a">社内担当（一括設定）:</label>';
+  h+='<select class="form-input" id="csv-assignee" style="width:auto;padding:4px 8px;font-size:.85em">'+buildSelectOptions(customerMaster.members,'',true)+'</select>';
+  h+='</div>';
+  h+='<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">';
+  h+='<label style="font-size:.8em;font-weight:600;color:#3a5a4a">ステータス（一括設定）:</label>';
+  h+='<select class="form-input" id="csv-status" style="width:auto;padding:4px 8px;font-size:.85em">'+buildSelectOptions(CUSTOMER_STATUSES,'',true)+'</select>';
+  h+='</div>';
+  h+='<div id="csv-import-progress" style="margin-bottom:12px;font-size:.85em;color:#3a5a4a;display:none"></div>';
+  h+='<button class="btn-primary" id="csv-import-btn" onclick="executeCSVImport()">'+rows.length+'件を取り込む</button>';
+  document.getElementById('modal-body').innerHTML=h;
+  // Store parsed data for later use
+  window._csvParsedData=parsed;
+  openModal();
+}
+
+async function executeCSVImport(){
+  var parsed=window._csvParsedData;
+  if(!parsed)return;
+  var btn=document.getElementById('csv-import-btn');
+  var progress=document.getElementById('csv-import-progress');
+  btn.disabled=true;btn.textContent='取り込み中...';
+  progress.style.display='';
+  // Gather mapping
+  var selects=document.querySelectorAll('.csv-map-select');
+  var mapping=[];
+  for(var i=0;i<selects.length;i++){mapping[parseInt(selects[i].getAttribute('data-col'))]=selects[i].value;}
+  var defaultAssignee=(document.getElementById('csv-assignee').value||'').trim();
+  var defaultStatus=(document.getElementById('csv-status').value||'').trim();
+  var rows=parsed.rows;
+  var imported=0,skipped=0,failed=0;
+  var BATCH_SIZE=100;
+  var sheetName=getCustomerSheetName();
+  var custSsId=getCustomerSheetId();
+  // Build objects
+  var objects=[];
+  for(var r=0;r<rows.length;r++){
+    var row=rows[r];
+    var obj={};
+    var sei='',mei='';
+    for(var c=0;c<row.length;c++){
+      var field=mapping[c];
+      if(!field)continue;
+      var val=(row[c]||'').trim();
+      if(field==='_sei'){sei=val;continue;}
+      if(field==='_mei'){mei=val;continue;}
+      if(field==='_memo')continue; // skip memo for now
+      obj[field]=val;
+    }
+    // Combine sei+mei if contact not set
+    if(!obj.contact&&(sei||mei))obj.contact=((sei||'')+' '+(mei||'')).trim();
+    // Skip if no company
+    if(!obj.company){skipped++;continue;}
+    // Fill defaults
+    if(!obj.assignee&&defaultAssignee)obj.assignee=defaultAssignee;
+    if(!obj.status&&defaultStatus)obj.status=defaultStatus;
+    if(!obj.createdAt)obj.createdAt=todayStr();
+    obj.id=generateCustomerId();
+    // Ensure all fields exist
+    CUSTOMER_FIELDS.forEach(function(f){if(!obj[f])obj[f]='';});
+    customers.push(obj);
+    objects.push(obj);
+    imported++;
+  }
+  // Batch append to Google Sheets
+  try{
+    var ssId=custSsId||getSheetId();
+    for(var b=0;b<objects.length;b+=BATCH_SIZE){
+      var batch=objects.slice(b,b+BATCH_SIZE);
+      var values=batch.map(function(obj){return toRow(obj,CUSTOMER_FIELDS);});
+      await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+ssId+'/values/'+encodeURIComponent(sheetName+'!A:ZZ')+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({values:values})
+      });
+      progress.textContent='書き込み中: '+Math.min(b+BATCH_SIZE,objects.length)+'/'+objects.length;
+    }
+    closeModal();renderCustomers();
+    showToast('CSV取込完了: '+imported+'件登録'+(skipped?' / '+skipped+'件スキップ':''));
+  }catch(e){
+    console.error('CSV import error:',e);
+    progress.textContent='エラー: '+e.message;
+    showToast('取込中にエラーが発生しました');
+    btn.disabled=false;btn.textContent='リトライ';
+  }
+  window._csvParsedData=null;
+}
+
 
 function buildSelectOptions(values,selected,includeBlank){
   var h=includeBlank?'<option value=""></option>':'';
