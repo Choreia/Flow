@@ -2323,9 +2323,9 @@ function renderDashboard(){
     var ah='';
     recent.forEach(function(a){
       var at=ACTIVITY_TYPES.find(function(t){return t.key===a.type})||{icon:'\u{1F4DD}',label:a.type};
-      ah+='<div class="activity-item"><div class="activity-icon">'+at.icon+'</div><div class="activity-body">';
+      ah+='<div class="activity-item" onclick="showActivityDetail(\''+escapeAttr(a.id)+'\')" style="cursor:pointer"><div class="activity-icon">'+at.icon+'</div><div class="activity-body">';
       ah+='<div class="activity-title">'+escapeHtml(a.content.substring(0,60))+'</div>';
-      ah+='<div class="activity-meta">'+escapeHtml(a.company)+' | '+formatDate(a.datetime)+'</div>';
+      ah+='<div class="activity-meta">'+escapeHtml(a.company)+(a.assignee?' | '+escapeHtml(a.assignee):'')+' | '+formatDate(a.datetime)+'</div>';
       ah+='</div></div>';
     });
     document.getElementById('dashboard-activities').innerHTML=ah;
