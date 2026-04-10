@@ -87,7 +87,7 @@ textarea.form-input{resize:vertical;min-height:80px}
 .status-badge.ordered{background:#d1fae5;color:#059669}
 .status-badge.delivered{background:#e0e8e4;color:#3a5a4a}
 .status-badge.invoiced{background:#f3e8ff;color:#7c3aed}
-.status-badge.paid{background:#1a6b4a;color:#fff}
+.status-badge.paid{background:#d1fae5;color:#065f46}
 .status-badge.lost{background:#f1f1f1;color:#888}
 
 /* Pipeline */
@@ -581,7 +581,7 @@ var DEAL_STATUSES=[
   {key:'ordered',label:'受注',color:'#059669'},
   {key:'delivered',label:'納品済',color:'#3a5a4a'},
   {key:'invoiced',label:'請求済',color:'#7c3aed'},
-  {key:'paid',label:'入金済',color:'#1a6b4a'},
+  {key:'paid',label:'入金済',color:'#065f46'},
   {key:'lost',label:'失注',color:'#888'}
 ];
 var ACTIVITY_TYPES=[
@@ -597,7 +597,7 @@ function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;
 function escapeAttr(s){return String(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function showToast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show')},3000);}
 function formatDate(d){if(!d)return '';try{var dt=new Date(d);if(isNaN(dt))return d;return dt.getFullYear()+'/'+(dt.getMonth()+1)+'/'+dt.getDate();}catch(e){return d;}}
-function formatCurrency(n){if(!n&&n!==0)return '';return Number(n).toLocaleString('ja-JP')+'円';}
+function formatCurrency(n,unit){if(!n&&n!==0)return '';var s=Number(n).toLocaleString('ja-JP')+'円';if(unit)s+='/'+unit;return s;}
 function generateId(){return Date.now().toString(36)+Math.random().toString(36).substr(2,5);}
 function todayStr(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 
@@ -1523,7 +1523,7 @@ function showCustomerDetail(id){
       h+='<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f5f9f7;border-radius:8px;margin-bottom:6px;cursor:pointer" onclick="closeDetail();setTimeout(function(){showDealDetail(\''+escapeAttr(d.id)+'\')},100)">';
       h+='<span class="status-badge '+d.status+'">'+getStatusLabel(d.status)+'</span>';
       h+='<span style="font-weight:600;font-size:.85em;flex:1">'+escapeHtml(d.name)+'</span>';
-      h+='<span style="font-size:.85em;font-weight:700;color:#1a6b4a">'+formatCurrency(d.amount)+'</span></div>';
+      h+='<span style="font-size:.85em;font-weight:700;color:#1a6b4a">'+formatCurrency(d.amount,d.amountUnit)+'</span></div>';
     });
   }else{h+='<p style="font-size:.85em;color:#5a7a6a">なし</p>';}
 
@@ -1626,7 +1626,8 @@ async function deleteCustomer(id){
 }
 
 // ==================== Deals ====================
-var DEAL_FIELDS=['id','customerId','company','name','status','amount','assignee','startDate','deadline','memo','updatedAt'];
+var DEAL_FIELDS=['id','customerId','company','name','status','amount','amountUnit','assignee','startDate','deadline','memo','updatedAt'];
+var AMOUNT_UNITS=['','月','年','式','日','台','個'];
 
 function getStatusLabel(key){var s=DEAL_STATUSES.find(function(x){return x.key===key});return s?s.label:key;}
 
@@ -1658,7 +1659,7 @@ function renderDealTable(list){
     h+='<td class="name-cell">'+escapeHtml(d.name)+'</td>';
     h+='<td>'+escapeHtml(d.company)+'</td>';
     h+='<td><span class="status-badge '+d.status+'">'+getStatusLabel(d.status)+'</span></td>';
-    h+='<td style="font-weight:700">'+formatCurrency(d.amount)+'</td>';
+    h+='<td style="font-weight:700">'+formatCurrency(d.amount,d.amountUnit)+'</td>';
     h+='<td class="hide-mobile">'+escapeHtml(d.assignee)+'</td>';
     h+='<td class="hide-mobile">'+formatDate(d.deadline)+'</td>';
     h+='</tr>';
@@ -1677,7 +1678,7 @@ function renderDealPipeline(list,containerId){
       h+='<div class="pipeline-card" onclick="showDealDetail(\''+escapeAttr(d.id)+'\')">';
       h+='<div class="deal-name">'+escapeHtml(d.name)+'</div>';
       h+='<div class="deal-company">'+escapeHtml(d.company)+'</div>';
-      if(d.amount)h+='<div class="deal-amount">'+formatCurrency(d.amount)+'</div>';
+      if(d.amount)h+='<div class="deal-amount">'+formatCurrency(d.amount,d.amountUnit)+'</div>';
       h+='</div>';
     });
     h+='</div>';
@@ -1702,7 +1703,9 @@ function showDealForm(editId,preCustomerId){
   h+='<div class="form-group"><label>案件名 *</label><input class="form-input" id="f-dealname" required value="'+escapeAttr(d?d.name:'')+'"></div>';
   h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
   h+='<div class="form-group"><label>ステータス</label><select class="form-input" id="f-status">'+statusOptions+'</select></div>';
-  h+='<div class="form-group"><label>金額</label><input class="form-input" id="f-amount" type="number" value="'+(d?d.amount||'':'')+'"></div></div>';
+  h+='<div class="form-group"><label>金額</label><div style="display:flex;gap:6px"><input class="form-input" id="f-amount" type="number" value="'+(d?d.amount||'':'')+'" style="flex:1"><select class="form-input" id="f-amountUnit" style="width:auto;min-width:60px">';
+  AMOUNT_UNITS.forEach(function(u){h+='<option value="'+u+'"'+((d&&d.amountUnit||'')===u?' selected':'')+'>'+(!u?'—':'/'+u)+'</option>';});
+  h+='</select></div></div></div>';
   h+='<div class="form-group"><label>担当者</label><input class="form-input" id="f-assignee" value="'+escapeAttr(d?d.assignee:currentUser.name)+'"></div>';
   h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
   h+='<div class="form-group"><label>開始日</label><input class="form-input" id="f-startdate" type="date" value="'+escapeAttr(d?d.startDate:todayStr())+'"></div>';
@@ -1724,6 +1727,7 @@ async function saveDeal(e,editId){
     name:document.getElementById('f-dealname').value.trim(),
     status:document.getElementById('f-status').value,
     amount:document.getElementById('f-amount').value||0,
+    amountUnit:document.getElementById('f-amountUnit').value||'',
     assignee:document.getElementById('f-assignee').value.trim(),
     startDate:document.getElementById('f-startdate').value,
     deadline:document.getElementById('f-deadline').value,
@@ -1748,7 +1752,7 @@ function showDealDetail(id){
   h+='<div style="margin-bottom:12px"><span class="status-badge '+d.status+'" style="font-size:.85em">'+getStatusLabel(d.status)+'</span></div>';
   h+='<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.9em;margin-bottom:16px">';
   h+='<span style="color:#5a7a6a">顧客</span><span style="font-weight:600">'+escapeHtml(d.company)+'</span>';
-  if(d.amount)h+='<span style="color:#5a7a6a">金額</span><span style="font-weight:700;color:#1a6b4a;font-size:1.1em">'+formatCurrency(d.amount)+'</span>';
+  if(d.amount)h+='<span style="color:#5a7a6a">金額</span><span style="font-weight:700;color:#1a6b4a;font-size:1.1em">'+formatCurrency(d.amount,d.amountUnit)+'</span>';
   if(d.assignee)h+='<span style="color:#5a7a6a">担当</span><span>'+escapeHtml(d.assignee)+'</span>';
   if(d.startDate)h+='<span style="color:#5a7a6a">開始日</span><span>'+formatDate(d.startDate)+'</span>';
   if(d.deadline)h+='<span style="color:#5a7a6a">期限</span><span>'+formatDate(d.deadline)+'</span>';
@@ -2366,7 +2370,7 @@ async function getCustomerAdvice(customerId){
 
   ctx+='\n## 案件 ('+relatedDeals.length+'件)\n';
   relatedDeals.forEach(function(d){
-    ctx+='- '+d.name+' ['+getStatusLabel(d.status)+'] '+formatCurrency(d.amount)+' 担当:'+d.assignee+' 開始:'+d.startDate+(d.deadline?' 期限:'+d.deadline:'')+'\n';
+    ctx+='- '+d.name+' ['+getStatusLabel(d.status)+'] '+formatCurrency(d.amount,d.amountUnit)+' 担当:'+d.assignee+' 開始:'+d.startDate+(d.deadline?' 期限:'+d.deadline:'')+'\n';
   });
 
   ctx+='\n## 活動履歴 (直近20件)\n';
