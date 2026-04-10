@@ -2168,8 +2168,11 @@ function showActivityDetail(id){
   var cust=customers.find(function(c){return c.id===a.customerId});
   var deal=a.dealId?deals.find(function(d){return d.id===a.dealId}):null;
   var h='<h2>'+at.icon+' '+escapeHtml(at.label)+'<div>';
-  h+='<button class="btn-icon" onclick="closeDetail();showEditActivityForm(\''+escapeAttr(id)+'\')">&#9998;</button>';
-  h+='<button class="btn-icon btn-danger" onclick="deleteActivity(\''+escapeAttr(id)+'\')">&#128465;</button></div></h2>';
+  if(isActivityOwner(a)){
+    h+='<button class="btn-icon" onclick="closeDetail();showEditActivityForm(\''+escapeAttr(id)+'\')">&#9998;</button>';
+    h+='<button class="btn-icon btn-danger" onclick="deleteActivity(\''+escapeAttr(id)+'\')">&#128465;</button>';
+  }
+  h+='</div></h2>';
   h+='<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.9em;margin-bottom:16px">';
   h+='<span style="color:#5a7a6a">日時</span><span>'+formatDate(a.datetime)+'</span>';
   if(a.company)h+='<span style="color:#5a7a6a">顧客</span><span style="font-weight:600;cursor:pointer" onclick="closeDetail();showCustomerDetail(\''+escapeAttr(a.customerId)+'\')">'+escapeHtml(a.company)+'</span>';
@@ -2279,7 +2282,14 @@ async function saveActivity(e,editId){
   }catch(e){showToast('保存に失敗しました');console.error(e);}
 }
 
+function isActivityOwner(a){
+  if(!a)return false;
+  if(isAdmin())return true;
+  return a.assignee===currentUser.name;
+}
 async function deleteActivity(id){
+  var a=activities.find(function(x){return x.id===id});
+  if(!isActivityOwner(a)){showToast('削除は記録した本人のみ可能です');return;}
   if(!confirm('この活動記録を削除しますか？'))return;
   var idx=activities.findIndex(function(x){return x.id===id});
   if(idx<0)return;
