@@ -391,7 +391,7 @@ textarea.form-input{resize:vertical;min-height:80px}
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
         <input class="search-input" id="customer-search" placeholder="顧客を検索..." oninput="filterCustomers()" style="flex:1">
         <button class="btn-small" onclick="showCustomerForm()">+ 新規</button>
-        <button class="btn-small" onclick="document.getElementById('csv-file-input').click()" style="background:#2563eb">&#128196; CSV取込</button>
+        <button class="btn-small" onclick="showCSVImportGuide()" style="background:#2563eb">&#128196; CSV取込</button>
         <input type="file" id="csv-file-input" accept=".csv,.tsv,.txt" style="display:none" onchange="handleCSVFile(this)">
       </div>
       <div class="card" style="padding:0;overflow:hidden;overflow-x:auto">
@@ -1520,6 +1520,59 @@ function parseCSVText(text){
     rows.push(parseCSVLine(line));
   }
   return{headers:headers,rows:rows};
+}
+
+function showCSVImportGuide(){
+  document.getElementById('modal-title').textContent='CSV取込ガイド';
+  var h='';
+  h+='<div style="font-size:.85em;color:#3a5a4a;margin-bottom:16px;line-height:1.8">';
+  h+='<p style="margin-bottom:8px">以下の列名を含むCSVファイルを取り込めます。<br>列の順番は自由です。存在しない列はスキップされます。</p>';
+  h+='</div>';
+  h+='<div style="overflow-x:auto;margin-bottom:16px"><table style="width:100%;border-collapse:collapse;font-size:.78em">';
+  h+='<tr style="background:#f0f5f2"><th style="padding:4px 8px;text-align:left">列名（例）</th><th style="padding:4px 8px;text-align:left">対応フィールド</th><th style="padding:4px 8px;text-align:left">備考</th></tr>';
+  var rows=[
+    ['会社名 / 企業名 / 社名','会社名','<strong>必須</strong>'],
+    ['氏名 / 担当者 / 担当者名','担当者名','姓・名が別列でもOK'],
+    ['姓 / Last Name','姓','氏名と自動結合'],
+    ['名 / First Name','名','氏名と自動結合'],
+    ['部署 / 部署名','部署',''],
+    ['役職 / 肩書','役職',''],
+    ['TEL / 電話番号 / 電話','TEL',''],
+    ['携帯 / 携帯番号 / Mobile','携帯',''],
+    ['FAX','FAX',''],
+    ['Email / メール / メールアドレス','Email',''],
+    ['URL / HP / ホームページ','URL',''],
+    ['郵便番号 / 〒','郵便番号',''],
+    ['都道府県','都道府県',''],
+    ['市区町村','市区町村',''],
+    ['住所 / 住所1','住所',''],
+    ['建物名 / 住所2 / ビル名','建物名',''],
+    ['カナ / フリガナ','カナ',''],
+    ['法人格','法人格','株式会社 等']
+  ];
+  rows.forEach(function(r){
+    h+='<tr style="border-bottom:1px solid #e8f0ec"><td style="padding:4px 8px">'+r[0]+'</td><td style="padding:4px 8px">'+r[1]+'</td><td style="padding:4px 8px;color:#5a7a6a">'+r[2]+'</td></tr>';
+  });
+  h+='</table></div>';
+  h+='<div style="display:flex;gap:8px;margin-bottom:16px">';
+  h+='<button class="btn-secondary" onclick="downloadSampleCSV()">&#11015; サンプルCSVをダウンロード</button>';
+  h+='</div>';
+  h+='<button class="btn-primary" onclick="closeModal();document.getElementById(\'csv-file-input\').click()">CSVファイルを選択して取込</button>';
+  document.getElementById('modal-body').innerHTML=h;
+  openModal();
+}
+
+function downloadSampleCSV(){
+  var bom='\uFEFF';
+  var header='会社名,カナ,法人格,部署,氏名,役職,TEL,携帯,FAX,Email,URL,郵便番号,都道府県,市区町村,住所,建物名';
+  var row1='株式会社サンプル,カブシキガイシャサンプル,株式会社,営業部,山田太郎,部長,03-1234-5678,090-1234-5678,03-1234-5679,yamada@example.com,https://example.com,100-0001,東京都,千代田区,丸の内1-1-1,サンプルビル3F';
+  var row2='有限会社テスト,ユウゲンガイシャテスト,有限会社,総務部,佐藤花子,課長,06-9876-5432,,06-9876-5433,sato@test.co.jp,,530-0001,大阪府,大阪市北区,梅田2-2-2,';
+  var csv=bom+header+'\n'+row1+'\n'+row2+'\n';
+  var blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;a.download='顧客サンプル.csv';a.click();
+  URL.revokeObjectURL(url);
 }
 
 function handleCSVFile(input){
