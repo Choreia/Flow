@@ -2448,7 +2448,7 @@ function renderDashboard(){
   sh+='<div class="stat-card"><div class="stat-value">'+activeDeals.length+'</div><div class="stat-label">進行中案件</div></div>';
   sh+='<div class="stat-card accent"><div class="stat-value compact">'+formatCurrency(totalPipeline).replace('円','')+'</div><div class="stat-label">パイプライン</div></div>';
   sh+='<div class="stat-card"><div class="stat-value compact">'+formatCurrency(totalOrdered).replace('円','')+'</div><div class="stat-label">受注済み</div></div>';
-  sh+='<div class="stat-card"><div class="stat-value">'+monthActivities+'</div><div class="stat-label">今月の活動</div></div>';
+  sh+='<div class="stat-card" onclick="showMonthlyActivityChart()" style="cursor:pointer"><div class="stat-value">'+monthActivities+'</div><div class="stat-label">今月の活動</div></div>';
   sh+='<div class="stat-card"><div class="stat-value">'+deals.filter(function(d){return d.status==='paid'}).length+'</div><div class="stat-label">入金済み</div></div>';
   document.getElementById('dashboard-stats').innerHTML=sh;
 
@@ -2471,6 +2471,95 @@ function renderDashboard(){
   // Pipeline
   var pipelineDeals=deals.filter(function(d){return d.status!=='paid'&&d.status!=='lost'});
   renderDealPipeline(pipelineDeals,'dashboard-pipeline');
+}
+
+// ==================== Monthly Activity Chart ====================
+function showMonthlyActivityChart(){
+  var thisMonth=todayStr().substring(0,7);
+  var monthActs=activities.filter(function(a){return (a.datetime||'').substring(0,7)===thisMonth;});
+
+  // Aggregate by assignee x type
+  var byAssignee={};
+  monthActs.forEach(function(a){
+    var name=a.assignee||'(不明)';
+    if(!byAssignee[name])byAssignee[name]={};
+    var key=a.type||'other';
+    byAssignee[name][key]=(byAssignee[name][key]||0)+1;
+  });
+
+  var assignees=Object.keys(byAssignee).sort(function(a,b){
+    var ta=0,tb=0;
+    for(var k in byAssignee[a])ta+=byAssignee[a][k];
+    for(var k in byAssignee[b])tb+=byAssignee[b][k];
+    return tb-ta;
+  });
+
+  var maxTotal=0;
+  assignees.forEach(function(name){
+    var t=0;for(var k in byAssignee[name])t+=byAssignee[name][k];
+    if(t>maxTotal)maxTotal=t;
+  });
+
+  var typeColors={visit:'#2563eb',call:'#d97706',email:'#7c3aed',meeting:'#059669',other:'#8a9a8a'};
+
+  // Also aggregate by type totals for summary
+  var typeTotals={};
+  monthActs.forEach(function(a){
+    var k=a.type||'other';
+    typeTotals[k]=(typeTotals[k]||0)+1;
+  });
+
+  var monthLabel=thisMonth.replace('-','年')+'月';
+  document.getElementById('modal-title').textContent=monthLabel+'の活動レポート';
+
+  var h='';
+
+  // Summary badges
+  h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">';
+  h+='<span style="background:#1a6b4a;color:#fff;padding:4px 12px;border-radius:12px;font-size:.8em;font-weight:600">合計 '+monthActs.length+'件</span>';
+  ACTIVITY_TYPES.forEach(function(t){
+    var cnt=typeTotals[t.key]||0;
+    if(cnt)h+='<span style="background:#e8f0ec;color:#1a3a2a;padding:4px 10px;border-radius:12px;font-size:.8em">'+t.icon+' '+t.label+' '+cnt+'</span>';
+  });
+  h+='</div>';
+
+  // Bar chart by assignee
+  if(!assignees.length){
+    h+='<div style="text-align:center;padding:30px;color:#5a7a6a">今月の活動記録がありません</div>';
+  }else{
+    h+='<div style="margin-bottom:16px">';
+    assignees.forEach(function(name){
+      var counts=byAssignee[name];
+      var total=0;for(var k in counts)total+=counts[k];
+      h+='<div style="margin-bottom:12px">';
+      h+='<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:.85em;font-weight:600">'+escapeHtml(name)+'</span><span style="font-size:.8em;color:#5a7a6a">'+total+'件</span></div>';
+      // Stacked bar
+      var barWidth=maxTotal>0?Math.max((total/maxTotal)*100,8):0;
+      h+='<div style="display:flex;height:28px;border-radius:8px;overflow:hidden;width:'+barWidth+'%;min-width:40px">';
+      ACTIVITY_TYPES.forEach(function(t){
+        var c=counts[t.key]||0;
+        if(!c)return;
+        var pct=(c/total)*100;
+        h+='<div title="'+t.label+' '+c+'件" style="width:'+pct+'%;background:'+typeColors[t.key]+';display:flex;align-items:center;justify-content:center;color:#fff;font-size:.7em;font-weight:600;min-width:20px">';
+        if(c>0)h+=c;
+        h+='</div>';
+      });
+      h+='</div>';
+      h+='</div>';
+    });
+    h+='</div>';
+
+    // Legend
+    h+='<div style="display:flex;flex-wrap:wrap;gap:10px;font-size:.75em;color:#5a7a6a">';
+    ACTIVITY_TYPES.forEach(function(t){
+      if(!typeTotals[t.key])return;
+      h+='<span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:3px;background:'+typeColors[t.key]+'"></span>'+t.label+'</span>';
+    });
+    h+='</div>';
+  }
+
+  document.getElementById('modal-body').innerHTML=h;
+  openModal();
 }
 
 // ==================== Gmail Integration ====================
