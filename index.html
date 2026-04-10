@@ -2172,6 +2172,7 @@ async function saveDeal(e,editId){
 
 function showDealDetail(id){
   var d=deals.find(function(x){return x.id===id});if(!d)return;
+  var cust=customers.find(function(x){return x.id===d.customerId})||{};
   var relatedActivities=activities.filter(function(a){return a.dealId===id});
   var h='<h2>'+escapeHtml(d.name)+'<div><button class="btn-icon" onclick="closeDetail();showDealForm(\''+escapeAttr(id)+'\')">&#9998;</button>'+(isDealOwner(d)?'<button class="btn-icon btn-danger" onclick="deleteDeal(\''+escapeAttr(id)+'\')">&#128465;</button>':'')+'</div></h2>';
   h+='<div style="margin-bottom:12px"><span class="status-badge '+d.status+'" style="font-size:.85em">'+getStatusLabel(d.status)+'</span></div>';
@@ -2218,6 +2219,7 @@ function showDealDetail(id){
   h+='<button class="btn-small" onclick="showDocumentList(\''+escapeAttr(id)+'\',\'quote\')" style="background:#2563eb">&#128196; 見積書</button>';
   h+='<button class="btn-small" onclick="showDocumentList(\''+escapeAttr(id)+'\',\'delivery\')" style="background:#059669">&#128230; 納品書</button>';
   h+='<button class="btn-small" onclick="showDocumentList(\''+escapeAttr(id)+'\',\'invoice\')" style="background:#7c3aed">&#128179; 請求書</button>';
+  if(cust&&cust.folderUrl)h+='<a href="'+escapeAttr(cust.folderUrl)+'" target="_blank" class="btn-small" style="background:#5a7a6a;text-decoration:none">&#128193; フォルダ</a>';
   h+='</div></div>';
 
   // Related activities
