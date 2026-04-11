@@ -514,7 +514,7 @@ textarea.form-input{resize:vertical;min-height:80px}
 
       <!-- Saved cards list -->
       <div class="card" id="card-list-section">
-        <h2>名刺リスト <span id="card-count" style="font-size:.75em;color:#5a7a6a;font-weight:400"></span></h2>
+        <h2 style="display:flex;align-items:center;gap:8px">名刺リスト <span id="card-count" style="font-size:.75em;color:#5a7a6a;font-weight:400"></span><div style="margin-left:auto"><button class="btn-small" onclick="showCardCSVImportGuide()" style="background:#2563eb;font-size:.7em">&#128196; CSV取込</button></div></h2>
         <div id="card-list"></div>
         <div class="empty-state" id="card-empty">
           <div class="icon">&#128199;</div>
@@ -3389,6 +3389,155 @@ function resetCardScan(){
   });
   document.getElementById('scan-submit-btn').disabled=true;
   document.getElementById('scan-status').style.display='none';
+}
+
+// ==================== Card CSV Import ====================
+var CARD_CSV_HEADERS={
+  '会社名':'company','名前':'company','社名':'company','Company':'company','company':'company','企業名':'company',
+  '氏名':'contact','担当者':'contact','担当者名':'contact','名前':'contact','Name':'contact','name':'contact','姓名':'contact',
+  '姓':'_sei','名':'_mei','Last Name':'_sei','First Name':'_mei','last_name':'_sei','first_name':'_mei',
+  '部署':'department','部署名':'department','Department':'department','department':'department',
+  '役職':'title','Title':'title','title':'title','所属':'title','肩書':'title','肩書き':'title',
+  'TEL':'tel','電話番号':'tel','電話':'tel','Phone':'tel','phone':'tel','tel':'tel',
+  '携帯':'mobile','携帯番号':'mobile','Mobile':'mobile','mobile':'mobile','携帯電話':'mobile',
+  'FAX':'fax','fax':'fax','Fax':'fax',
+  'Email':'email','email':'email','メール':'email','メールアドレス':'email','E-mail':'email','E-Mail':'email','EMAIL':'email',
+  'URL':'url','url':'url','HP':'url','ホームページ':'url','Web':'url',
+  '住所':'address','Address':'address','address':'address',
+  '郵便番号':'postalCode','〒':'postalCode',
+  '都道府県':'prefecture',
+  '市区町村':'city',
+  '備考':'note','メモ':'note','Note':'note','note':'note','Notes':'note'
+};
+
+function showCardCSVImportGuide(){
+  document.getElementById('modal-title').textContent='名刺CSV取込ガイド';
+  var h='';
+  h+='<div style="font-size:.85em;color:#3a5a4a;margin-bottom:16px;line-height:1.8">';
+  h+='<p style="margin-bottom:8px">名刺管理ソフト等からエクスポートしたCSVを名刺リストに取り込めます。<br>以下の列名に対応しています（列の順番は自由です）。</p>';
+  h+='</div>';
+  h+='<div style="overflow-x:auto;margin-bottom:16px"><table style="width:100%;border-collapse:collapse;font-size:.78em">';
+  h+='<tr style="background:#f0f5f2"><th style="padding:4px 8px;text-align:left">列名（例）</th><th style="padding:4px 8px;text-align:left">対応フィールド</th></tr>';
+  var rows=[
+    ['会社名 / 企業名 / 社名','会社名'],
+    ['氏名 / 担当者名（または 姓+名 の2列）','氏名'],
+    ['部署 / 部署名','部署'],
+    ['役職 / 肩書','役職'],
+    ['TEL / 電話番号','TEL'],
+    ['携帯 / 携帯番号 / Mobile','携帯'],
+    ['FAX','FAX'],
+    ['Email / メール / メールアドレス','Email'],
+    ['URL / HP','URL'],
+    ['住所 / Address','住所'],
+    ['備考 / メモ','備考']
+  ];
+  rows.forEach(function(r){
+    h+='<tr style="border-bottom:1px solid #e8f0ec"><td style="padding:4px 8px">'+r[0]+'</td><td style="padding:4px 8px">'+r[1]+'</td></tr>';
+  });
+  h+='</table></div>';
+  h+='<div style="display:flex;gap:8px;margin-bottom:16px">';
+  h+='<button class="btn-secondary" onclick="downloadCardSampleCSV()">&#11015; サンプルCSV</button>';
+  h+='</div>';
+  h+='<input type="file" id="card-csv-file" accept=".csv,.tsv,.txt" style="display:none" onchange="handleCardCSVFile(this)">';
+  h+='<button class="btn-primary" onclick="document.getElementById(\'card-csv-file\').click()">CSVファイルを選択して取込</button>';
+  document.getElementById('modal-body').innerHTML=h;
+  openModal();
+}
+
+function downloadCardSampleCSV(){
+  var bom='\uFEFF';
+  var header='会社名,氏名,部署,役職,TEL,携帯,FAX,Email,URL,住所,備考';
+  var row1='株式会社サンプル,山田太郎,営業部,部長,03-1234-5678,090-1234-5678,03-1234-5679,yamada@example.com,https://example.com,東京都千代田区丸の内1-1-1,展示会で交換';
+  var row2='有限会社テスト,佐藤花子,総務部,課長,06-9876-5432,,,sato@test.co.jp,,大阪府大阪市北区梅田2-2-2,';
+  var csv=bom+header+'\n'+row1+'\n'+row2+'\n';
+  var blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');a.href=url;a.download='名刺サンプル.csv';a.click();
+  URL.revokeObjectURL(url);
+}
+
+function handleCardCSVFile(input){
+  var file=input.files[0];if(!file)return;
+  input.value='';
+  var readerSjis=new FileReader();
+  readerSjis.onload=function(e){
+    var text=new TextDecoder('shift_jis').decode(e.target.result);
+    var parsedSjis=parseCSVText(text);
+    var readerUtf=new FileReader();
+    readerUtf.onload=function(e2){
+      var textUtf=e2.target.result;
+      var parsedUtf=parseCSVText(textUtf);
+      var scoreSjis=0,scoreUtf=0;
+      parsedSjis.headers.forEach(function(h){if(CARD_CSV_HEADERS[h.trim()])scoreSjis++;});
+      parsedUtf.headers.forEach(function(h){if(CARD_CSV_HEADERS[h.trim()])scoreUtf++;});
+      var parsed=scoreUtf>=scoreSjis?parsedUtf:parsedSjis;
+      if(parsed.headers.length<2){showToast('CSVを解析できませんでした');return;}
+      showCardCSVMapping(parsed,file.name);
+    };
+    readerUtf.readAsText(file,'UTF-8');
+  };
+  readerSjis.readAsArrayBuffer(file);
+}
+
+function showCardCSVMapping(parsed,fileName){
+  var headers=parsed.headers.map(function(h){return h.trim();});
+  var rows=parsed.rows;
+  var mapping=[];
+  var fieldLabels={company:'会社名',contact:'氏名',_sei:'姓',_mei:'名',department:'部署',title:'役職',tel:'TEL',mobile:'携帯',fax:'FAX',email:'Email',url:'URL',address:'住所',postalCode:'郵便番号',prefecture:'都道府県',city:'市区町村',note:'備考'};
+  var allFields=['','company','contact','_sei','_mei','department','title','tel','mobile','fax','email','url','postalCode','prefecture','city','address','note'];
+  for(var i=0;i<headers.length;i++){mapping.push(CARD_CSV_HEADERS[headers[i]]||'');}
+
+  document.getElementById('modal-title').textContent='名刺CSV取込 — '+escapeHtml(fileName);
+  var h='<div style="margin-bottom:12px;font-size:.85em;color:#3a5a4a">'+rows.length+'件の名刺データが見つかりました。列の対応を確認してください。</div>';
+  h+='<div style="overflow-x:auto;margin-bottom:16px"><table style="width:100%;border-collapse:collapse;font-size:.8em">';
+  h+='<tr><th style="padding:6px 8px;background:#f0f5f2;text-align:left">CSV列名</th><th style="padding:6px 8px;background:#f0f5f2;text-align:left">サンプル</th><th style="padding:6px 8px;background:#f0f5f2;text-align:left">対応</th></tr>';
+  for(var i=0;i<headers.length;i++){
+    var sample=rows.length>0&&rows[0][i]?rows[0][i]:'';
+    if(sample.length>30)sample=sample.substring(0,30)+'...';
+    h+='<tr><td style="padding:6px 8px;border-bottom:1px solid #e8f0ec;font-weight:600;white-space:nowrap">'+escapeHtml(headers[i])+'</td>';
+    h+='<td style="padding:6px 8px;border-bottom:1px solid #e8f0ec;color:#5a7a6a;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(sample)+'</td>';
+    h+='<td style="padding:6px 8px;border-bottom:1px solid #e8f0ec"><select class="form-input card-csv-map" data-col="'+i+'" style="padding:4px 8px;font-size:.9em">';
+    h+='<option value="">(スキップ)</option>';
+    for(var j=1;j<allFields.length;j++){
+      var f=allFields[j];
+      h+='<option value="'+f+'"'+(mapping[i]===f?' selected':'')+'>'+escapeHtml(fieldLabels[f]||f)+'</option>';
+    }
+    h+='</select></td></tr>';
+  }
+  h+='</table></div>';
+  h+='<div id="card-csv-progress" style="margin-bottom:12px;font-size:.85em;color:#3a5a4a;display:none"></div>';
+  h+='<button class="btn-primary" onclick="executeCardCSVImport()">'+rows.length+'件を名刺リストに取込</button>';
+  document.getElementById('modal-body').innerHTML=h;
+  window._cardCsvParsed=parsed;
+  openModal();
+}
+
+function executeCardCSVImport(){
+  var parsed=window._cardCsvParsed;if(!parsed)return;
+  var selects=document.querySelectorAll('.card-csv-map');
+  var mapping=[];
+  for(var i=0;i<selects.length;i++){mapping[parseInt(selects[i].getAttribute('data-col'))]=selects[i].value;}
+  var rows=parsed.rows;
+  var imported=0,skipped=0;
+  for(var r=0;r<rows.length;r++){
+    var row=rows[r];
+    var card={};var sei='',mei='';
+    for(var c=0;c<row.length;c++){
+      var field=mapping[c];if(!field)continue;
+      var val=(row[c]||'').trim();
+      if(field==='_sei'){sei=val;continue;}
+      if(field==='_mei'){mei=val;continue;}
+      card[field]=val;
+    }
+    if(!card.contact&&(sei||mei))card.contact=((sei||'')+' '+(mei||'')).trim();
+    if(!card.contact&&!card.company){skipped++;continue;}
+    savedCards.push(card);
+    imported++;
+  }
+  persistCards();renderCardList();
+  closeModal();
+  showToast('名刺取込完了: '+imported+'件'+(skipped?' / '+skipped+'件スキップ':''));
+  window._cardCsvParsed=null;
 }
 
 function renderCardList(){
