@@ -168,7 +168,7 @@ textarea.form-input{resize:vertical;min-height:80px}
 .admin-add-btn{padding:8px 14px;background:#1a6b4a;color:#fff;border:none;border-radius:10px;font-size:.85em;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}
 
 /* Modal */
-.modal-overlay{display:none;position:fixed;inset:0;background:rgba(26,46,36,.4);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);z-index:200;align-items:flex-end;justify-content:center}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(26,46,36,.4);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);z-index:300;align-items:flex-end;justify-content:center}
 .modal-overlay.active{display:flex}
 .modal-sheet{background:#fff;border-radius:20px 20px 0 0;width:100%;max-width:600px;padding:20px;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 20px);animation:slideUp .3s ease;max-height:90vh;overflow-y:auto}
 @keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
@@ -183,7 +183,7 @@ textarea.form-input{resize:vertical;min-height:80px}
 .loading-state{text-align:center;padding:48px 20px;color:#5a7a6a}
 .spinner{display:inline-block;width:24px;height:24px;border:3px solid #d0ddd6;border-top-color:#1a6b4a;border-radius:50%;animation:spin .7s linear infinite;margin-bottom:8px}
 @keyframes spin{to{transform:rotate(360deg)}}
-.toast{position:fixed;top:20px;left:50%;z-index:300;transform:translateX(-50%) translateY(-80px);background:#1a2e24;color:#fff;padding:10px 20px;border-radius:10px;font-size:.85em;transition:transform .3s ease;pointer-events:none;max-width:90%;text-align:center}
+.toast{position:fixed;top:20px;left:50%;z-index:400;transform:translateX(-50%) translateY(-80px);background:#1a2e24;color:#fff;padding:10px 20px;border-radius:10px;font-size:.85em;transition:transform .3s ease;pointer-events:none;max-width:90%;text-align:center}
 .toast.show{transform:translateX(-50%) translateY(0)}
 
 /* Responsive table */
@@ -964,15 +964,12 @@ function findTemplateSheet(sheetNames,docType){
   return null;
 }
 
-function parseDocActivities(dealId,docType){
-  var dt=DOC_TYPES[docType];if(!dt)return [];
-  var deal=deals.find(function(x){return x.id===dealId});
-  var custId=deal?deal.customerId:'';
+function getDealDocuments(dealId){
   return activities.filter(function(a){
-    return (a.dealId===dealId||a.customerId===custId)&&a.type==='other'&&(a.content||'').indexOf('['+dt.label+']')===0;
+    return a.dealId===dealId&&a.type==='other'&&(a.content||'').indexOf('[帳票]')===0;
   }).map(function(a){
-    var m=a.content.match(/^\[.+?\]\s+(\S+)\s+\{([a-zA-Z0-9_-]+)\}\s*(.*)/);
-    var m2=a.content.match(/^\[.+?\]\s+(\S+)\s+(.*)/);
+    var m=a.content.match(/^\[帳票\]\s+(\S+)\s+\{([a-zA-Z0-9_-]+)\}\s*(.*)/);
+    var m2=a.content.match(/^\[帳票\]\s+(\S+)\s+(.*)/);
     return {
       actId:a.id,
       docNum:m?m[1]:(m2?m2[1]:''),
@@ -982,41 +979,6 @@ function parseDocActivities(dealId,docType){
       assignee:a.assignee
     };
   });
-}
-
-function showDocumentList(dealId,docType){
-  var dt=DOC_TYPES[docType];if(!dt)return;
-  var deal=deals.find(function(x){return x.id===dealId});if(!deal)return;
-  var docs=parseDocActivities(dealId,docType);
-  var colors={quote:'#2563eb',delivery:'#059669',invoice:'#7c3aed'};
-  var color=colors[docType]||'#1a6b4a';
-
-  document.getElementById('modal-title').textContent=dt.label+'一覧 — '+escapeHtml(deal.name);
-  var h='';
-
-  if(docs.length){
-    h+='<div style="margin-bottom:16px">';
-    docs.forEach(function(doc,i){
-      h+='<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:#f5f9f7;border-radius:10px;margin-bottom:6px">';
-      h+='<div style="flex:1">';
-      h+='<div style="font-weight:600;font-size:.9em">'+escapeHtml(doc.docNum)+'</div>';
-      h+='<div style="font-size:.8em;color:#5a7a6a">'+escapeHtml(doc.title)+'</div>';
-      h+='<div style="font-size:.75em;color:#8a9a8a">'+escapeHtml(doc.assignee||'')+' | '+formatDate(doc.date)+'</div>';
-      h+='</div>';
-      if(doc.ssId){
-        h+='<a href="https://docs.google.com/spreadsheets/d/'+escapeAttr(doc.ssId)+'" target="_blank" class="btn-small" style="background:'+color+';text-decoration:none;font-size:.75em">開く</a>';
-        h+='<button class="btn-small" onclick="copyDocument(\''+escapeAttr(dealId)+'\',\''+escapeAttr(docType)+'\',\''+escapeAttr(doc.ssId)+'\')" style="background:#5a7a6a;font-size:.75em">コピーして作成</button>';
-      }
-      h+='</div>';
-    });
-    h+='</div>';
-  }else{
-    h+='<div style="text-align:center;padding:20px;color:#5a7a6a;font-size:.9em">まだ'+dt.label+'がありません</div>';
-  }
-
-  h+='<button class="btn-primary" onclick="closeModal();generateDocument(\''+escapeAttr(dealId)+'\',\''+escapeAttr(docType)+'\')" style="background:'+color+'">+ テンプレートから新規作成</button>';
-  document.getElementById('modal-body').innerHTML=h;
-  openModal();
 }
 
 // Auto-detect template layout by reading header row and key cells
@@ -1099,56 +1061,45 @@ async function detectTemplateLayout(ssId,sheetName){
   return layout;
 }
 
-async function copyDocument(dealId,docType,sourceSsId){
-  var dt=DOC_TYPES[docType];if(!dt)return;
+async function copyDealDocument(dealId,sourceSsId){
   var deal=deals.find(function(x){return x.id===dealId});if(!deal)return;
   var cust=customers.find(function(x){return x.id===deal.customerId})||{};
-  closeModal();
 
   try{
-    showToast(dt.label+'をコピー中...');
+    showToast('帳票をコピー中...');
+    var docNum=generateDocNum(cust,dealId);
+    var fileName=buildDocFileName(cust,docNum);
 
-    var existingDocs=parseDocActivities(dealId,docType);
-    var serial=String(existingDocs.length+1).padStart(5,'0');
-    var docNum=(cust.id||'000000')+'-'+dt.prefix+'-'+serial;
-    var dateStr=todayStr().replace(/-/g,'');
-    var custName=(cust.company||'不明').replace(/[\\\/:*?"<>|]/g,'_');
-    var fileName=cust.id+'_御'+dt.label+'_'+custName+'_'+dateStr;
-
-    // Copy the source spreadsheet
     var copy=await apiFetch('https://www.googleapis.com/drive/v3/files/'+sourceSsId+'/copy?supportsAllDrives=true',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name:fileName})
     });
     var newId=copy.id;
 
-    // Auto-detect layout to find docNum and date cells
-    var sheetMeta=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+'?fields=sheets.properties');
-    var firstSheet=(sheetMeta.sheets&&sheetMeta.sheets[0])?sheetMeta.sheets[0].properties.title:'Sheet1';
-    var layout=await detectTemplateLayout(newId,firstSheet);
-
-    var updates=[
-      {range:firstSheet+'!'+layout.docNumCol+layout.docNumRow,values:[[docNum]]},
-      {range:firstSheet+'!'+(layout.dateCol||layout.docNumCol)+(layout.dateRow||layout.docNumRow+1),values:[[todayStr()]]}
-    ];
-    await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+'/values:batchUpdate',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({valueInputOption:'RAW',data:updates})
-    });
-
-    // Move to customer folder
+    // Update doc numbers and dates on all sheets
+    await fillAllSheets(newId,cust,deal,docNum);
     await moveToCustomerFolder(newId,cust);
+    await recordDocActivity(docNum,newId,deal,cust,dealId);
 
-    // Record activity
-    await recordDocActivity(dt,docNum,newId,deal,cust,dealId);
-
-    showToast(dt.label+'をコピーしました');
+    showToast('帳票をコピーしました');
     window.open('https://docs.google.com/spreadsheets/d/'+newId,'_blank');
     renderActivities();showDealDetail(dealId);
   }catch(e){
     console.error('copyDocument error:',e);
     showToast('コピーに失敗しました: '+e.message);
   }
+}
+
+function generateDocNum(cust,dealId){
+  var existing=getDealDocuments(dealId);
+  var serial=String(existing.length+1).padStart(5,'0');
+  return (cust.id||'000000')+'-'+serial;
+}
+
+function buildDocFileName(cust,docNum){
+  var dateStr=todayStr().replace(/-/g,'');
+  var custName=(cust.company||'不明').replace(/[\\\/:*?"<>|]/g,'_');
+  return docNum+'_'+custName+'_'+dateStr;
 }
 
 async function moveToCustomerFolder(fileId,cust){
@@ -1166,8 +1117,8 @@ async function moveToCustomerFolder(fileId,cust){
   }
 }
 
-async function recordDocActivity(dt,docNum,newId,deal,cust,dealId){
-  var actContent='['+dt.label+'] '+docNum+' {'+newId+'} '+deal.name+(deal.amount?' '+formatCurrency(deal.amount,deal.amountUnit):'');
+async function recordDocActivity(docNum,newId,deal,cust,dealId){
+  var actContent='[帳票] '+docNum+' {'+newId+'} '+deal.name+(deal.amount?' '+formatCurrency(deal.amount,deal.amountUnit):'');
   var act={
     id:generateId(),customerId:cust.id||'',company:cust.company||'',dealId:dealId,
     type:'other',content:actContent,assignee:currentUser.name||'',
@@ -1177,9 +1128,36 @@ async function recordDocActivity(dt,docNum,newId,deal,cust,dealId){
   await appendRow('活動',act,ACTIVITY_FIELDS);
 }
 
-async function generateDocument(dealId,docType){
-  var dt=DOC_TYPES[docType];
-  if(!dt){showToast('不明な帳票タイプ');return;}
+// Fill company/contact/docNum/date/subject/assignee on ALL sheets in the spreadsheet
+async function fillAllSheets(ssId,cust,deal,docNum){
+  var meta=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+ssId+'?fields=sheets.properties.title');
+  var sheets=(meta.sheets||[]).map(function(s){return s.properties.title;});
+  var fmtDate=todayStr().replace(/(\d{4})-(\d{2})-(\d{2})/,function(_,y,m,d){return y+'年'+parseInt(m)+'月'+parseInt(d)+'日';});
+
+  for(var i=0;i<sheets.length;i++){
+    var sheetName=sheets[i];
+    try{
+      var layout=await detectTemplateLayout(ssId,sheetName);
+      if(!layout.headerRow)continue; // not a document sheet
+      var updates=[];
+      function addCell(cell,val){updates.push({range:sheetName+'!'+cell,values:[[val]]});}
+      addCell('A'+layout.companyRow,(cust.company||'')+(cust.corpType?(' '+cust.corpType):''));
+      if(layout.contactRow)addCell('B'+(layout.contactRow+1),(cust.contact||''));
+      addCell(layout.docNumCol+layout.docNumRow,docNum);
+      addCell((layout.dateCol||layout.docNumCol)+(layout.dateRow||layout.docNumRow+1),fmtDate);
+      addCell(layout.subjectCol+layout.subjectRow,deal.name||'');
+      if(layout.assigneeCol)addCell(layout.assigneeCol+layout.assigneeRow,deal.assignee||currentUser.name||'');
+      if(updates.length){
+        await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+ssId+'/values:batchUpdate',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({valueInputOption:'RAW',data:updates})
+        });
+      }
+    }catch(e){console.warn('fillAllSheets skip:',sheetName,e);}
+  }
+}
+
+async function createDealDocument(dealId){
   var deal=deals.find(function(x){return x.id===dealId});
   if(!deal){showToast('案件が見つかりません');return;}
   var cust=customers.find(function(x){return x.id===deal.customerId})||{};
@@ -1187,155 +1165,99 @@ async function generateDocument(dealId,docType){
   if(!tplId){showToast('帳票テンプレートが未設定です（設定画面で登録してください）');return;}
 
   try{
-    showToast(dt.label+'を作成中...');
+    showToast('帳票を作成中...');
 
-    // Find template sheet name
-    var tplMeta=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+tplId+'?fields=sheets.properties.title');
-    var tplSheetNames=(tplMeta.sheets||[]).map(function(s){return s.properties.title;});
-    var tplSheetName=findTemplateSheet(tplSheetNames,docType);
-    if(!tplSheetName){showToast(dt.label+'のシートがテンプレートに見つかりません');return;}
+    var docNum=generateDocNum(cust,dealId);
+    var fileName=buildDocFileName(cust,docNum);
 
-    // Detect layout from template
-    var layout=await detectTemplateLayout(tplId,tplSheetName);
-
-    // Generate document number
-    var existingDocs=parseDocActivities(dealId,docType);
-    var serial=String(existingDocs.length+1).padStart(5,'0');
-    var docNum=(cust.id||'000000')+'-'+dt.prefix+'-'+serial;
-    var dateStr=todayStr().replace(/-/g,'');
-    var custName=(cust.company||'不明').replace(/[\\\/:*?"<>|]/g,'_');
-    var fileName=cust.id+'_御'+dt.label+'_'+custName+'_'+dateStr;
-
-    // 1. Copy template spreadsheet
+    // 1. Copy the entire template spreadsheet (all sheets: 見積書, 納品書, 請求書)
     var copy=await apiFetch('https://www.googleapis.com/drive/v3/files/'+tplId+'/copy?supportsAllDrives=true',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name:fileName})
     });
     var newId=copy.id;
 
-    // 2. Delete non-target sheets, keep only the target + variant sheets
-    var newMeta=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+'?fields=sheets.properties');
-    var deleteReqs=[];
-    var targetSheetId=0;
-    (newMeta.sheets||[]).forEach(function(s){
-      var title=s.properties.title;
-      if(title===tplSheetName){targetSheetId=s.properties.sheetId;}
-      else if(title===tplSheetName+'.'){/* keep variant */}
-      else{deleteReqs.push({deleteSheet:{sheetId:s.properties.sheetId}});}
-    });
-    if(deleteReqs.length){
-      await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+':batchUpdate',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({requests:deleteReqs})
-      });
-    }
+    // 2. Fill in header data (company, contact, docNum, date, subject, assignee) on ALL sheets
+    await fillAllSheets(newId,cust,deal,docNum);
 
-    // 3. Fill in header data using detected layout
-    var updates=[];
-    function addCell(cell,val){updates.push({range:tplSheetName+'!'+cell,values:[[val]]});}
-
-    // Company name
-    addCell('A'+layout.companyRow,(cust.company||'')+(cust.corpType?(' '+cust.corpType):''));
-    // Contact
-    if(layout.contactRow)addCell('B'+(layout.contactRow+1),(cust.contact||''));
-    // Doc number
-    addCell(layout.docNumCol+layout.docNumRow,docNum);
-    // Date
-    var fmtDate=todayStr().replace(/(\d{4})-(\d{2})-(\d{2})/,function(_,y,m,d){return y+'年'+parseInt(m)+'月'+parseInt(d)+'日';});
-    addCell((layout.dateCol||layout.docNumCol)+(layout.dateRow||layout.docNumRow+1),fmtDate);
-    // Subject (件名)
-    addCell(layout.subjectCol+layout.subjectRow,deal.name||'');
-    // Assignee
-    if(layout.assigneeCol)addCell(layout.assigneeCol+layout.assigneeRow,deal.assignee||currentUser.name||'');
-
-    // --- Line items ---
+    // 3. Write line items to the first sheet (見積書) if available
     var lineItems=parseDealLineItems(deal.lineItems);
-    var TEMPLATE_ITEM_ROWS=layout.templateItemRows;
-    var ITEM_START_ROW=layout.itemStartRow;
+    if(lineItems.length){
+      var meta=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+'?fields=sheets.properties');
+      var firstSheet=(meta.sheets&&meta.sheets[0])?meta.sheets[0].properties.title:'Sheet1';
+      var firstSheetId=(meta.sheets&&meta.sheets[0])?meta.sheets[0].properties.sheetId:0;
+      var layout=await detectTemplateLayout(newId,firstSheet);
 
-    var totalRowsNeeded=0;
-    lineItems.forEach(function(li){totalRowsNeeded++;if(li.desc)totalRowsNeeded++;});
+      var TEMPLATE_ITEM_ROWS=layout.templateItemRows;
+      var ITEM_START_ROW=layout.itemStartRow;
+      var totalRowsNeeded=0;
+      lineItems.forEach(function(li){totalRowsNeeded++;if(li.desc)totalRowsNeeded++;});
 
-    // Insert extra rows if needed
-    var extraRows=totalRowsNeeded-TEMPLATE_ITEM_ROWS;
-    if(extraRows>0){
-      await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+':batchUpdate',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({requests:[{insertDimension:{range:{sheetId:targetSheetId,dimension:'ROWS',startIndex:ITEM_START_ROW-1+TEMPLATE_ITEM_ROWS,endIndex:ITEM_START_ROW-1+TEMPLATE_ITEM_ROWS+extraRows},inheritFromBefore:true}}]})
-      });
-    }
-
-    // Write line item data
-    var curRow=ITEM_START_ROW;
-    var itemNo=1;
-    lineItems.forEach(function(li){
-      var r=curRow;
-      addCell(layout.noCol+r,itemNo);
-      addCell(layout.nameCol+r,li.name||'');
-      if(li.qty)addCell(layout.qtyCol+r,Number(li.qty));
-      if(li.unit&&layout.unitCol)addCell(layout.unitCol+r,li.unit);
-      if(li.unitPrice)addCell(layout.priceCol+r,Number(li.unitPrice));
-      curRow++;
-      if(li.desc){addCell(layout.nameCol+curRow,li.desc);curRow++;}
-      itemNo++;
-    });
-
-    var itemEndRow=ITEM_START_ROW+Math.max(totalRowsNeeded,TEMPLATE_ITEM_ROWS)-1;
-    var subtotalRow=ITEM_START_ROW+(layout.subtotalOffset||TEMPLATE_ITEM_ROWS)+(extraRows>0?extraRows:0);
-
-    if(updates.length){
-      await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+'/values:batchUpdate',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({valueInputOption:'RAW',data:updates})
-      });
-    }
-
-    // Write formulas
-    var formulaUpdates=[];
-    function addFormula(cell,val){formulaUpdates.push({range:tplSheetName+'!'+cell,values:[[val]]});}
-    var ac=layout.amountCol;var tc=layout.taxCol;var qc=layout.qtyCol;var pc=layout.priceCol;var mc=layout.markCol;
-    curRow=ITEM_START_ROW;
-    lineItems.forEach(function(li){
-      var r=curRow;
-      addFormula(ac+r,'='+qc+r+'*'+pc+r);
-      if(li.taxRate===8){
-        addFormula(tc+r,'='+ac+r+'*0.08');
-        addFormula(mc+r,'※');
-      }else{
-        addFormula(tc+r,'='+ac+r+'*0.1');
+      var extraRows=totalRowsNeeded-TEMPLATE_ITEM_ROWS;
+      if(extraRows>0){
+        await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+':batchUpdate',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({requests:[{insertDimension:{range:{sheetId:firstSheetId,dimension:'ROWS',startIndex:ITEM_START_ROW-1+TEMPLATE_ITEM_ROWS,endIndex:ITEM_START_ROW-1+TEMPLATE_ITEM_ROWS+extraRows},inheritFromBefore:true}}]})
+        });
       }
-      curRow++;
-      if(li.desc)curRow++;
-    });
-    // Subtotal formulas
-    addFormula(ac+subtotalRow,'=SUM('+ac+ITEM_START_ROW+':'+ac+itemEndRow+')');
-    if(tc)addFormula(tc+subtotalRow,'=SUM('+tc+ITEM_START_ROW+':'+tc+itemEndRow+')');
-    // Total row
-    if(layout.totalOffset!==undefined){
-      var totalRow2=ITEM_START_ROW+layout.totalOffset+(extraRows>0?extraRows:0);
-      addFormula('D13','='+ac+totalRow2);
-    }
 
-    if(formulaUpdates.length){
-      await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+'/values:batchUpdate',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({valueInputOption:'USER_ENTERED',data:formulaUpdates})
+      var updates=[];
+      function addCell(cell,val){updates.push({range:firstSheet+'!'+cell,values:[[val]]});}
+      var curRow=ITEM_START_ROW;var itemNo=1;
+      lineItems.forEach(function(li){
+        var r=curRow;
+        addCell(layout.noCol+r,itemNo);
+        addCell(layout.nameCol+r,li.name||'');
+        if(li.qty)addCell(layout.qtyCol+r,Number(li.qty));
+        if(li.unit&&layout.unitCol)addCell(layout.unitCol+r,li.unit);
+        if(li.unitPrice)addCell(layout.priceCol+r,Number(li.unitPrice));
+        curRow++;if(li.desc){addCell(layout.nameCol+curRow,li.desc);curRow++;}
+        itemNo++;
       });
+      if(updates.length){
+        await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+'/values:batchUpdate',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({valueInputOption:'RAW',data:updates})
+        });
+      }
+
+      // Write formulas
+      var formulaUpdates=[];
+      function addFormula(cell,val){formulaUpdates.push({range:firstSheet+'!'+cell,values:[[val]]});}
+      var ac=layout.amountCol,tc=layout.taxCol,qc=layout.qtyCol,pc=layout.priceCol,mc=layout.markCol;
+      curRow=ITEM_START_ROW;
+      lineItems.forEach(function(li){
+        var r=curRow;
+        addFormula(ac+r,'='+qc+r+'*'+pc+r);
+        if(li.taxRate===8){addFormula(tc+r,'='+ac+r+'*0.08');addFormula(mc+r,'※');}
+        else{addFormula(tc+r,'='+ac+r+'*0.1');}
+        curRow++;if(li.desc)curRow++;
+      });
+      var itemEndRow=ITEM_START_ROW+Math.max(totalRowsNeeded,TEMPLATE_ITEM_ROWS)-1;
+      var subtotalRow=ITEM_START_ROW+(layout.subtotalOffset||TEMPLATE_ITEM_ROWS)+(extraRows>0?extraRows:0);
+      addFormula(ac+subtotalRow,'=SUM('+ac+ITEM_START_ROW+':'+ac+itemEndRow+')');
+      if(tc)addFormula(tc+subtotalRow,'=SUM('+tc+ITEM_START_ROW+':'+tc+itemEndRow+')');
+      if(formulaUpdates.length){
+        await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+newId+'/values:batchUpdate',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({valueInputOption:'USER_ENTERED',data:formulaUpdates})
+        });
+      }
     }
 
     // 4. Move to customer folder
     await moveToCustomerFolder(newId,cust);
 
     // 5. Record activity
-    await recordDocActivity(dt,docNum,newId,deal,cust,dealId);
+    await recordDocActivity(docNum,newId,deal,cust,dealId);
 
-    showToast(dt.label+'を作成しました');
+    showToast('帳票を作成しました');
     window.open('https://docs.google.com/spreadsheets/d/'+newId,'_blank');
     renderActivities();
     showDealDetail(dealId);
   }catch(e){
-    console.error('generateDocument error:',e);
-    showToast(dt.label+'の作成に失敗しました: '+e.message);
+    console.error('createDealDocument error:',e);
+    showToast('帳票の作成に失敗しました: '+e.message);
   }
 }
 
@@ -2357,11 +2279,21 @@ function showDealDetail(id){
   });
   h+='</div></div>';
 
-  // Document buttons
-  h+='<div style="margin-bottom:16px"><label style="font-size:.8em;font-weight:600;color:#3a5a4a;display:block;margin-bottom:6px">帳票</label><div style="display:flex;flex-wrap:wrap;gap:6px">';
-  h+='<button class="btn-small" onclick="showDocumentList(\''+escapeAttr(id)+'\',\'quote\')" style="background:#2563eb">&#128196; 見積書</button>';
-  h+='<button class="btn-small" onclick="showDocumentList(\''+escapeAttr(id)+'\',\'delivery\')" style="background:#059669">&#128230; 納品書</button>';
-  h+='<button class="btn-small" onclick="showDocumentList(\''+escapeAttr(id)+'\',\'invoice\')" style="background:#7c3aed">&#128179; 請求書</button>';
+  // Document section - single file per deal
+  var dealDocs=getDealDocuments(id);
+  h+='<div style="margin-bottom:16px"><label style="font-size:.8em;font-weight:600;color:#3a5a4a;display:block;margin-bottom:6px">帳票</label>';
+  if(dealDocs.length){
+    dealDocs.forEach(function(doc){
+      h+='<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f5f9f7;border-radius:10px;margin-bottom:6px">';
+      h+='<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:.85em">'+escapeHtml(doc.docNum)+'</div>';
+      h+='<div style="font-size:.75em;color:#5a7a6a">'+escapeHtml(doc.assignee||'')+' | '+formatDate(doc.date)+'</div></div>';
+      h+='<a href="https://docs.google.com/spreadsheets/d/'+escapeAttr(doc.ssId)+'" target="_blank" class="btn-small" style="background:#1a6b4a;text-decoration:none;font-size:.75em">開く</a>';
+      h+='<button class="btn-small" onclick="copyDealDocument(\''+escapeAttr(id)+'\',\''+escapeAttr(doc.ssId)+'\')" style="background:#5a7a6a;font-size:.75em">コピー</button>';
+      h+='</div>';
+    });
+  }
+  h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">';
+  h+='<button class="btn-small" onclick="createDealDocument(\''+escapeAttr(id)+'\')" style="background:#2563eb">+ 新規帳票</button>';
   if(cust&&cust.folderUrl)h+='<a href="'+escapeAttr(cust.folderUrl)+'" target="_blank" class="btn-small" style="background:#5a7a6a;text-decoration:none">&#128193; フォルダ</a>';
   h+='</div></div>';
 
