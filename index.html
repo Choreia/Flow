@@ -836,6 +836,7 @@ function showMainView(){
   document.getElementById('admin-panel').style.display='none';
   GEMINI_API_KEY=orgConfig.geminiApiKey||'';
   if(GEMINI_API_KEY)try{localStorage.setItem('choreia_gemini_key',GEMINI_API_KEY);}catch(e){}
+  try{localStorage.setItem('choreia_is_admin',admin?'1':'0');}catch(e){}
   document.getElementById('tab-hr').style.display=admin&&orgConfig.hrSpreadsheetId?'':'none';
   if(orgConfig.hrSpreadsheetId&&admin)loadHrData();
   switchTab('dashboard');
