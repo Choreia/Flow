@@ -307,8 +307,8 @@ textarea.form-input{resize:vertical;min-height:80px}
 
     <!-- Admin panel -->
     <div class="card admin-panel" id="admin-panel" style="display:none">
-      <h2>管理者設定</h2>
-      <h3 style="font-size:.85em;margin-bottom:6px">管理者一覧</h3>
+      <h2>Flow 設定</h2>
+      <h3 style="font-size:.85em;margin-bottom:6px">Flow 管理者</h3>
       <div class="admin-list" id="admin-list"></div>
       <div class="admin-add-row">
         <input class="admin-add-input" id="admin-add-email" placeholder="メールアドレス">
@@ -836,13 +836,20 @@ function showMainView(){
   document.getElementById('admin-panel').style.display='none';
   GEMINI_API_KEY=orgConfig.geminiApiKey||'';
   if(GEMINI_API_KEY)try{localStorage.setItem('choreia_gemini_key',GEMINI_API_KEY);}catch(e){}
-  try{localStorage.setItem('choreia_is_admin',admin?'1':'0');}catch(e){}
+  var globalAdmins=orgConfig.admins||[orgConfig.admin];
+  var isGlobalAdmin=globalAdmins.indexOf(currentUser.email)!==-1;
+  try{localStorage.setItem('choreia_is_admin',isGlobalAdmin?'1':'0');}catch(e){}
   document.getElementById('tab-hr').style.display=admin&&orgConfig.hrSpreadsheetId?'':'none';
   if(orgConfig.hrSpreadsheetId&&admin)loadHrData();
   switchTab('dashboard');
 }
-function isAdmin(){if(!orgConfig)return false;var admins=orgConfig.admins||[orgConfig.admin];return admins.indexOf(currentUser.email)!==-1;}
-function getAdmins(){if(!orgConfig)return[];return orgConfig.admins||[orgConfig.admin];}
+function isAdmin(){
+  if(!orgConfig)return false;
+  var globalAdmins=orgConfig.admins||[orgConfig.admin];
+  var flowAdmins=orgConfig.flowAdmins||[];
+  return globalAdmins.indexOf(currentUser.email)!==-1||flowAdmins.indexOf(currentUser.email)!==-1;
+}
+function getAdmins(){if(!orgConfig)return[];return orgConfig.flowAdmins||orgConfig.admins||[orgConfig.admin];}
 function toggleAdminPanel(){
   var p=document.getElementById('admin-panel');var visible=p.style.display!=='none';
   p.style.display=visible?'none':'';
@@ -862,12 +869,11 @@ async function addAdmin(){
   var input=document.getElementById('admin-add-email');var email=input.value.trim().toLowerCase();
   if(!email||email.indexOf('@')===-1){showToast('有効なメールアドレスを入力');return;}
   var admins=getAdmins();if(admins.indexOf(email)!==-1){showToast('既に管理者です');return;}
-  admins.push(email);orgConfig.admins=admins;input.value='';renderAdminList();await saveConfig();showToast(email+' を追加しました');
+  admins.push(email);orgConfig.flowAdmins=admins;input.value='';renderAdminList();await saveConfig();showToast(email+' を追加しました');
 }
 async function removeAdmin(email){
   var admins=getAdmins().filter(function(a){return a!==email});
-  if(!admins.length){showToast('管理者は最低1人必要');return;}
-  orgConfig.admins=admins;renderAdminList();await saveConfig();showToast(email+' を削除しました');
+  orgConfig.flowAdmins=admins;renderAdminList();await saveConfig();showToast(email+' を削除しました');
 }
 function loadGeminiKey(){
   var input=document.getElementById('gemini-key-input');
