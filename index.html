@@ -1319,29 +1319,55 @@ function timestampForFile(){
   return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'_'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());
 }
 
-// Find a folder under parentId whose name starts with the given customer ID prefix.
-// Matches both "100003_..." and "10003-_..." style.
+// Find a folder under parentId by customer ID prefix (legacy) or company name.
 function matchFolderByCustomerId(folders,custId){
   if(!custId)return null;
   var idStr=String(custId).trim();
   for(var i=0;i<folders.length;i++){
     var nm=folders[i].name||'';
-    // Strict prefix: "<id>_" or "<id>-"
     if(nm.indexOf(idStr+'_')===0||nm.indexOf(idStr+'-')===0)return folders[i];
   }
   return null;
 }
 
-// Find or create the folder for a single customer. Returns folder object {id,name,webViewLink}.
+function matchFolderByCompany(folders,companyName){
+  if(!companyName)return null;
+  var target=companyName.trim();
+  for(var i=0;i<folders.length;i++){
+    var nm=(folders[i].name||'').trim();
+    if(nm===target)return folders[i];
+    // Also match legacy "ID_会社名" format
+    var m=nm.match(/^\d+[_-](.+)$/);
+    if(m&&m[1]===target)return folders[i];
+  }
+  return null;
+}
+
+// Find existing folder URL from other customers with the same company name
+function findSharedFolderUrl(companyName){
+  if(!companyName)return '';
+  for(var i=0;i<customers.length;i++){
+    if(customers[i].company===companyName&&customers[i].folderUrl)return customers[i].folderUrl;
+  }
+  return '';
+}
+
+// Find or create the folder for a customer. Same company shares the same folder.
 async function ensureCustomerFolder(customer,cachedFolders){
   var parentId=orgConfig&&orgConfig.customerFolderParentId;
   if(!parentId)throw new Error('顧客フォルダ親フォルダが未設定です');
-  if(!customer.id)throw new Error('顧客IDが未設定です');
+  // First check if another customer with the same company already has a folder
+  var sharedUrl=findSharedFolderUrl(customer.company);
+  if(sharedUrl){
+    var fm=sharedUrl.match(/folders\/([a-zA-Z0-9_-]+)/);
+    if(fm)return{id:fm[1],webViewLink:sharedUrl};
+  }
+  // Then check Drive folders
   var folders=cachedFolders||await listDriveFolders(parentId);
-  var existing=matchFolderByCustomerId(folders,customer.id);
+  var existing=matchFolderByCompany(folders,customer.company)||matchFolderByCustomerId(folders,customer.id);
   if(existing)return existing;
-  // Create new
-  var safeName=String(customer.id)+'_'+(customer.company||'').replace(/[\\\/:*?"<>|]/g,'_');
+  // Create new folder with company name only
+  var safeName=(customer.company||String(customer.id)).replace(/[\\\/:*?"<>|]/g,'_');
   return await createDriveFolder(parentId,safeName);
 }
 
@@ -2018,14 +2044,23 @@ async function bulkSyncCustomerFolders(){
       if(!c.id){skipped++;continue;}
       if(c.folderUrl){skipped++;continue;}
       try{
-        var existing=matchFolderByCustomerId(folders,c.id);
+        // Check if another customer with same company already has folder
+        var sharedUrl=findSharedFolderUrl(c.company);
         var f;
-        if(existing){f=existing;matched++;}
-        else{
-          var safeName=String(c.id)+'_'+(c.company||'').replace(/[\\\/:*?"<>|]/g,'_');
-          f=await createDriveFolder(orgConfig.customerFolderParentId,safeName);
-          folders.push(f);
-          created++;
+        if(sharedUrl){
+          var fm=sharedUrl.match(/folders\/([a-zA-Z0-9_-]+)/);
+          f=fm?{id:fm[1],webViewLink:sharedUrl}:null;
+          if(f){matched++;} else{f=null;}
+        }
+        if(!f){
+          var existing=matchFolderByCompany(folders,c.company)||matchFolderByCustomerId(folders,c.id);
+          if(existing){f=existing;matched++;}
+          else{
+            var safeName=(c.company||String(c.id)).replace(/[\\\/:*?"<>|]/g,'_');
+            f=await createDriveFolder(orgConfig.customerFolderParentId,safeName);
+            folders.push(f);
+            created++;
+          }
         }
         c.folderUrl=f.webViewLink||folderUrlFromId(f.id);
         await updateRow(sheetName,i,c,CUSTOMER_FIELDS,custSsId);
