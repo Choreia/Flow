@@ -2471,6 +2471,8 @@ function showActivityForm(preCustomerId,preDealId,editId){
   // Photo
   h+='<div class="form-group"><label>写真</label>';
   h+='<input type="file" id="f-actphoto" accept="image/*" style="font-size:.85em">';
+  h+='<div style="margin-top:6px;font-size:.8em;color:#5a7a6a">または Photos / Drive の共有リンクを貼付：</div>';
+  h+='<input class="form-input" id="f-actphotourl" placeholder="https://drive.google.com/..." value="'+escapeAttr(existing&&existing.photoUrl?existing.photoUrl:'')+'" style="margin-top:4px;font-size:.85em">';
   if(existing&&existing.photoUrl)h+='<div style="margin-top:6px"><img src="'+escapeAttr(existing.photoUrl)+'" style="max-width:120px;border-radius:8px"></div>';
   h+='</div>';
   h+='<button class="btn-primary" type="submit">'+(existing?'更新':'記録')+'</button></form>';
@@ -2496,7 +2498,11 @@ async function saveActivity(e,editId){
     photoUrl:(existing&&existing.photoUrl)||''
   };
 
-  // Upload photo if selected
+  // Check manually entered photo URL first
+  var manualUrl=(document.getElementById('f-actphotourl')||{}).value||'';
+  if(manualUrl.trim())obj.photoUrl=manualUrl.trim();
+
+  // Upload photo if selected (overrides manual URL)
   var photoInput=document.getElementById('f-actphoto');
   if(photoInput&&photoInput.files&&photoInput.files[0]){
     var folderId=null;
