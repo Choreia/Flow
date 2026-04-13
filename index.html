@@ -978,21 +978,50 @@ function findTemplateSheet(sheetNames,docType){
   return null;
 }
 
+var DOC_STATUSES=[
+  {key:'作成',color:'#6b7280'},
+  {key:'送付済',color:'#2563eb'},
+  {key:'確認済',color:'#059669'}
+];
+
 function getDealDocuments(dealId){
   return activities.filter(function(a){
-    return a.dealId===dealId&&a.type==='other'&&(a.content||'').indexOf('[帳票]')===0;
+    return a.dealId===dealId&&a.type==='other'&&(a.content||'').match(/^\[帳票[:\uff1a]?/);
   }).map(function(a){
-    var m=a.content.match(/^\[帳票\]\s+(\S+)\s+\{([a-zA-Z0-9_-]+)\}\s*(.*)/);
-    var m2=a.content.match(/^\[帳票\]\s+(\S+)\s+(.*)/);
+    var sm=a.content.match(/^\[帳票[:\uff1a]?([^\]]*)\]/);
+    var docStatus=(sm&&sm[1])?sm[1].trim():'作成';
+    var rest=a.content.replace(/^\[帳票[:\uff1a]?[^\]]*\]\s*/,'');
+    var m=rest.match(/^(\S+)\s+\{([a-zA-Z0-9_-]+)\}\s*(.*)/);
+    var m2=rest.match(/^(\S+)\s+(.*)/);
     return {
       actId:a.id,
+      actIdx:activities.indexOf(a),
       docNum:m?m[1]:(m2?m2[1]:''),
       ssId:m?m[2]:'',
       title:m?m[3]:(m2?m2[2]:''),
       date:a.datetime,
-      assignee:a.assignee
+      assignee:a.assignee,
+      status:docStatus
     };
   });
+}
+
+async function cycleDocStatus(dealId,actId){
+  var a=activities.find(function(x){return x.id===actId;});
+  if(!a)return;
+  var sm=a.content.match(/^\[帳票[:\uff1a]?([^\]]*)\]/);
+  var cur=(sm&&sm[1])?sm[1].trim():'作成';
+  var keys=DOC_STATUSES.map(function(s){return s.key;});
+  var nextIdx=(keys.indexOf(cur)+1)%keys.length;
+  var next=keys[nextIdx];
+  // Update content
+  a.content=a.content.replace(/^\[帳票[:\uff1a]?[^\]]*\]/,'[帳票:'+next+']');
+  var idx=activities.indexOf(a);
+  if(idx>=0){
+    try{await updateRow('活動',idx,a,ACTIVITY_FIELDS);showToast(next);}
+    catch(e){showToast('更新失敗');}
+  }
+  showDealDetail(dealId);
 }
 
 // Auto-detect template layout by reading header row and key cells
@@ -1132,7 +1161,7 @@ async function moveToCustomerFolder(fileId,cust){
 }
 
 async function recordDocActivity(docNum,newId,deal,cust,dealId){
-  var actContent='[帳票] '+docNum+' {'+newId+'} '+deal.name+(deal.amount?' '+formatCurrency(deal.amount,deal.amountUnit):'');
+  var actContent='[帳票:作成] '+docNum+' {'+newId+'} '+deal.name+(deal.amount?' '+formatCurrency(deal.amount,deal.amountUnit):'');
   var act={
     id:generateId(),customerId:cust.id||'',company:cust.company||'',dealId:dealId,
     type:'other',content:actContent,assignee:currentUser.name||'',
@@ -2333,11 +2362,13 @@ function showDealDetail(id){
   h+='<div style="margin-bottom:16px"><label style="font-size:.8em;font-weight:600;color:#3a5a4a;display:block;margin-bottom:6px">帳票</label>';
   if(dealDocs.length){
     dealDocs.forEach(function(doc){
-      h+='<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f5f9f7;border-radius:10px;margin-bottom:6px">';
-      h+='<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:.85em">'+escapeHtml(doc.docNum)+'</div>';
+      var ds=DOC_STATUSES.find(function(s){return s.key===doc.status;})||DOC_STATUSES[0];
+      h+='<div style="display:flex;align-items:center;gap:6px;padding:8px 12px;background:#f5f9f7;border-radius:10px;margin-bottom:6px;flex-wrap:wrap">';
+      h+='<button onclick="cycleDocStatus(\''+escapeAttr(id)+'\',\''+escapeAttr(doc.actId)+'\')" style="padding:3px 10px;border-radius:12px;font-size:.7em;font-weight:600;border:none;cursor:pointer;background:'+ds.color+';color:#fff" title="クリックでステータス変更">'+escapeHtml(ds.key)+'</button>';
+      h+='<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:.85em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(doc.docNum)+'</div>';
       h+='<div style="font-size:.75em;color:#5a7a6a">'+escapeHtml(doc.assignee||'')+' | '+formatDate(doc.date)+'</div></div>';
-      h+='<a href="https://docs.google.com/spreadsheets/d/'+escapeAttr(doc.ssId)+'" target="_blank" class="btn-small" style="background:#1a6b4a;text-decoration:none;font-size:.75em">開く</a>';
-      h+='<button class="btn-small" onclick="copyDealDocument(\''+escapeAttr(id)+'\',\''+escapeAttr(doc.ssId)+'\')" style="background:#5a7a6a;font-size:.75em">コピー</button>';
+      if(doc.ssId)h+='<a href="https://docs.google.com/spreadsheets/d/'+escapeAttr(doc.ssId)+'" target="_blank" class="btn-small" style="background:#1a6b4a;text-decoration:none;font-size:.7em">開く</a>';
+      h+='<button class="btn-small" onclick="copyDealDocument(\''+escapeAttr(id)+'\',\''+escapeAttr(doc.ssId)+'\')" style="background:#5a7a6a;font-size:.7em">コピー</button>';
       h+='</div>';
     });
   }
