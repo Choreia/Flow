@@ -515,8 +515,19 @@ textarea.form-input{resize:vertical;min-height:80px}
 
       <!-- Saved cards list -->
       <div class="card" id="card-list-section">
-        <h2 style="display:flex;align-items:center;gap:8px">名刺リスト <span id="card-count" style="font-size:.75em;color:#5a7a6a;font-weight:400"></span><div style="margin-left:auto"><button class="btn-small" onclick="showCardCSVImportGuide()" style="background:#2563eb;font-size:.7em">&#128196; CSV取込</button></div></h2>
-        <div id="card-list"></div>
+        <h2 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">名刺一覧 <span id="card-count" style="font-size:.75em;color:#5a7a6a;font-weight:400"></span><div style="margin-left:auto;display:flex;gap:6px"><button class="btn-small" onclick="exportCardsCSV()" style="background:#1a6b4a;font-size:.7em">&#11015; CSV出力</button><button class="btn-small" onclick="showCardCSVImportGuide()" style="background:#2563eb;font-size:.7em">&#128196; CSV取込</button></div></h2>
+        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap">
+          <input class="search-input" id="card-search" placeholder="名刺を検索（会社名・氏名・部署・メール等）..." oninput="renderCardList()" style="flex:1;min-width:180px">
+        </div>
+        <div id="card-action-bar" style="display:none;gap:6px;margin-bottom:10px;padding:8px 10px;background:#eef5f0;border-radius:8px;align-items:center;flex-wrap:wrap">
+          <span id="card-selected-count" style="font-size:.8em;color:#1a6b4a;font-weight:600"></span>
+          <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn-small" onclick="copySelectedCardEmails()" style="background:#1a6b4a;font-size:.7em">&#128231; メール一括コピー</button>
+            <button class="btn-small" onclick="exportSelectedCardsCSV()" style="background:#2563eb;font-size:.7em">&#11015; 選択をCSV出力</button>
+            <button class="btn-small" onclick="clearCardSelection()" style="background:#8a9e92;font-size:.7em">選択解除</button>
+          </div>
+        </div>
+        <div id="card-list" style="overflow-x:auto"></div>
         <div class="empty-state" id="card-empty">
           <div class="icon">&#128199;</div>
           <div class="title">スキャン済みの名刺がありません</div>
@@ -615,11 +626,32 @@ function formatCurrency(n,unit){if(!n&&n!==0)return '';var s=Number(n).toLocaleS
 function generateId(){return Date.now().toString(36)+Math.random().toString(36).substr(2,5);}
 function todayStr(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 
-async function apiFetch(url,opts){
+var _tokenRefreshResolver=null,_pendingTokenRefresh=null;
+function refreshAccessToken(){
+  if(_pendingTokenRefresh)return _pendingTokenRefresh;
+  if(!tokenClient)return Promise.reject(new Error('Auth not initialized'));
+  _pendingTokenRefresh=new Promise(function(resolve,reject){
+    _tokenRefreshResolver={resolve:resolve,reject:reject};
+    try{tokenClient.requestAccessToken({prompt:''});}
+    catch(e){_tokenRefreshResolver=null;reject(e);}
+  });
+  _pendingTokenRefresh.catch(function(){}).then(function(){_pendingTokenRefresh=null;});
+  return _pendingTokenRefresh;
+}
+async function authFetch(url,opts){
   opts=opts||{};
   opts.headers=opts.headers||{};
   opts.headers['Authorization']='Bearer '+accessToken;
   var r=await fetch(url,opts);
+  if(r.status===401){
+    try{await refreshAccessToken();}catch(e){return r;}
+    opts.headers['Authorization']='Bearer '+accessToken;
+    r=await fetch(url,opts);
+  }
+  return r;
+}
+async function apiFetch(url,opts){
+  var r=await authFetch(url,opts);
   if(!r.ok){var txt='';try{txt=JSON.stringify(await r.json())}catch(e){}throw new Error('API '+r.status+' '+txt);}
   return r.json();
 }
@@ -645,6 +677,12 @@ async function restoreSession(){
   }
 }
 async function onTokenResponse(resp){
+  if(_tokenRefreshResolver){
+    var r=_tokenRefreshResolver;_tokenRefreshResolver=null;
+    if(resp.error){r.reject(new Error(resp.error));return;}
+    accessToken=resp.access_token;localStorage.setItem('choreia_token',accessToken);
+    r.resolve(accessToken);return;
+  }
   if(resp.error){showToast('ログインに失敗しました');return;}
   accessToken=resp.access_token;localStorage.setItem('choreia_token',accessToken);
   showView('loading');
@@ -668,7 +706,7 @@ function handleSignIn(){if(!tokenClient){showToast('準備中');return;}tokenCli
 function handleSignOut(){
   if(accessToken)google.accounts.oauth2.revoke(accessToken);
   accessToken=null;localStorage.removeItem('choreia_token');clearCachedConfig();
-  orgConfig=null;customers=[];deals=[];activities=[];
+  orgConfig=null;customers=[];deals=[];activities=[];savedCards=[];_cardsLoadedOnce=false;_cardSheetEnsured=false;
   document.getElementById('auth-out').style.display='';document.getElementById('auth-in').style.display='none';
   showView('welcome');
 }
@@ -727,14 +765,34 @@ async function findConfig(){
     refreshConfigFromDrive();
     return;
   }
+  console.time('findConfig:firstRun');
   try{
+    console.time('findConfig:driveSearch');
     var data=await apiFetch('https://www.googleapis.com/drive/v3/files?q='+encodeURIComponent("name='"+CONFIG_FILENAME+"' and trashed=false")+'&corpora=allDrives&includeItemsFromAllDrives=true&supportsAllDrives=true&fields=files(id)');
-    for(var i=0;i<(data.files||[]).length;i++){
-      try{var c=await apiFetch('https://www.googleapis.com/drive/v3/files/'+data.files[i].id+'?alt=media&supportsAllDrives=true');
-        if(c.domain===currentUser.domain){orgConfig=c;orgConfig.configFileId=data.files[i].id;saveCachedConfig();await loadAllData();showMainView();return;}
-      }catch(e){}
+    console.timeEnd('findConfig:driveSearch');
+    var files=data.files||[];
+    console.log('findConfig: candidate files',files.length);
+    if(files.length){
+      // Fetch all candidate config files in parallel; pick the first one matching this user's domain
+      console.time('findConfig:fetchCandidates');
+      var fetched=await Promise.all(files.map(function(f){
+        return apiFetch('https://www.googleapis.com/drive/v3/files/'+f.id+'?alt=media&supportsAllDrives=true').then(function(c){return {file:f,config:c};},function(){return null;});
+      }));
+      console.timeEnd('findConfig:fetchCandidates');
+      for(var i=0;i<fetched.length;i++){
+        var r=fetched[i];if(!r||!r.config)continue;
+        if(r.config.domain===currentUser.domain){
+          orgConfig=r.config;orgConfig.configFileId=r.file.id;saveCachedConfig();
+          console.time('findConfig:loadAllData');
+          await loadAllData();
+          console.timeEnd('findConfig:loadAllData');
+          console.timeEnd('findConfig:firstRun');
+          showMainView();return;
+        }
+      }
     }
-  }catch(e){}
+  }catch(e){console.error('findConfig error:',e);}
+  console.timeEnd('findConfig:firstRun');
   showSetup();
 }
 
@@ -752,8 +810,8 @@ async function refreshConfigFromDrive(){
 async function saveConfig(){
   try{
     var cfg=Object.assign({},orgConfig);delete cfg.configFileId;
-    var r=await fetch('https://www.googleapis.com/upload/drive/v3/files/'+orgConfig.configFileId+'?uploadType=media&supportsAllDrives=true',{
-      method:'PATCH',headers:{'Authorization':'Bearer '+accessToken,'Content-Type':'application/json'},body:JSON.stringify(cfg,null,2)
+    var r=await authFetch('https://www.googleapis.com/upload/drive/v3/files/'+orgConfig.configFileId+'?uploadType=media&supportsAllDrives=true',{
+      method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg,null,2)
     });
     if(!r.ok)throw new Error('Save failed');
     saveCachedConfig();
@@ -800,8 +858,8 @@ async function confirmSetup(){
     // Move spreadsheet to the selected folder
     var fileInfo=await apiFetch('https://www.googleapis.com/drive/v3/files/'+ssId+'?fields=parents&supportsAllDrives=true');
     var prevParents=(fileInfo.parents||[]).join(',');
-    await fetch('https://www.googleapis.com/drive/v3/files/'+ssId+'?addParents='+setupFolderId+'&removeParents='+prevParents+'&supportsAllDrives=true',{
-      method:'PATCH',headers:{'Authorization':'Bearer '+accessToken,'Content-Type':'application/json'},body:'{}'
+    await authFetch('https://www.googleapis.com/drive/v3/files/'+ssId+'?addParents='+setupFolderId+'&removeParents='+prevParents+'&supportsAllDrives=true',{
+      method:'PATCH',headers:{'Content-Type':'application/json'},body:'{}'
     });
 
     // Write headers
@@ -819,7 +877,7 @@ async function confirmSetup(){
     var cfg={domain:currentUser.domain,admin:currentUser.email,admins:[currentUser.email],adminName:currentUser.name,folderId:setupFolderId,folderName:setupFolderName,driveId:setupDriveId,driveName:setupDriveName,spreadsheetId:ssId,createdAt:new Date().toISOString()};
     var m=JSON.stringify({name:CONFIG_FILENAME,parents:[setupFolderId],mimeType:'application/json'});
     var f=new FormData();f.append('metadata',new Blob([m],{type:'application/json'}));f.append('file',new Blob([JSON.stringify(cfg,null,2)],{type:'application/json'}));
-    var r=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true',{method:'POST',headers:{'Authorization':'Bearer '+accessToken},body:f});
+    var r=await authFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true',{method:'POST',body:f});
     if(!r.ok)throw new Error('Config save failed');
     var fl=await r.json();
     orgConfig=cfg;orgConfig.configFileId=fl.id;
@@ -1342,9 +1400,9 @@ async function uploadFileToFolder(parentId,name,base64,mimeType){
     'Content-Transfer-Encoding: base64\r\n\r\n'+
     base64+'\r\n'+
     '--'+boundary+'--';
-  var res=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink',{
+  var res=await authFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink',{
     method:'POST',
-    headers:{'Authorization':'Bearer '+accessToken,'Content-Type':'multipart/related; boundary='+boundary},
+    headers:{'Content-Type':'multipart/related; boundary='+boundary},
     body:body
   });
   if(!res.ok){var t='';try{t=await res.text();}catch(x){}throw new Error('upload failed: '+res.status+' '+t);}
@@ -1370,22 +1428,25 @@ function matchFolderByCustomerId(folders,custId){
 
 function matchFolderByCompany(folders,companyName){
   if(!companyName)return null;
-  var target=companyName.trim();
+  var target=normalizeCompany(companyName);
+  if(!target)return null;
   for(var i=0;i<folders.length;i++){
     var nm=(folders[i].name||'').trim();
-    if(nm===target)return folders[i];
+    if(normalizeCompany(nm)===target)return folders[i];
     // Also match legacy "ID_会社名" format
     var m=nm.match(/^\d+[_-](.+)$/);
-    if(m&&m[1]===target)return folders[i];
+    if(m&&normalizeCompany(m[1])===target)return folders[i];
   }
   return null;
 }
 
-// Find existing folder URL from other customers with the same company name
+// Find existing folder URL from other customers with the same company name (normalized)
 function findSharedFolderUrl(companyName){
   if(!companyName)return '';
+  var key=normalizeCompany(companyName);
+  if(!key)return '';
   for(var i=0;i<customers.length;i++){
-    if(customers[i].company===companyName&&customers[i].folderUrl)return customers[i].folderUrl;
+    if(customers[i].folderUrl&&normalizeCompany(customers[i].company)===key)return customers[i].folderUrl;
   }
   return '';
 }
@@ -1420,6 +1481,7 @@ async function loadAllData(){
   SHEET_ID=getSheetId();if(!SHEET_ID)return;
   var custSsId=getCustomerSheetId();
   var useExternalCustomers=custSsId&&custSsId!==SHEET_ID;
+  console.time('loadAllData');
   try{
     if(useExternalCustomers){
       // Fetch customer DB and Flow spreadsheet in parallel
@@ -1460,7 +1522,9 @@ async function loadAllData(){
       customerMaster={services:[],categories:[],members:[]};
     }
     deals.forEach(function(d){d.amount=d.amount?Number(d.amount):0;});
+    console.log('loadAllData: customers='+customers.length+' deals='+deals.length+' activities='+activities.length);
   }catch(e){console.error('loadAllData error:',e);showToast('データの読み込みに失敗しました');}
+  console.timeEnd('loadAllData');
 }
 function parseRows(rows,fields){
   return rows.map(function(row){
@@ -1501,6 +1565,62 @@ async function deleteRow(sheet,rowIndex,ssId){
   });
 }
 
+// ==================== Card sheet helpers ====================
+var CARD_SHEET_NAME='名刺';
+var _cardSheetEnsured=false;
+async function ensureCardSheet(){
+  if(_cardSheetEnsured)return;
+  var id=getSheetId();if(!id)return;
+  var meta=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+'?fields=sheets.properties');
+  var exists=(meta.sheets||[]).some(function(s){return s.properties.title===CARD_SHEET_NAME;});
+  if(!exists){
+    await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+':batchUpdate',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({requests:[{addSheet:{properties:{title:CARD_SHEET_NAME}}}]})
+    });
+    await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+'/values/'+encodeURIComponent(CARD_SHEET_NAME+'!A1')+'?valueInputOption=RAW',{
+      method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({values:[CARD_HEADER_JA]})
+    });
+  }
+  _cardSheetEnsured=true;
+}
+
+// Normalize company name so 株式会社/(株), full/half-width, and whitespace variants match
+function normalizeCompany(name){
+  if(!name)return '';
+  var n=String(name).trim();
+  // Fullwidth to halfwidth (basic)
+  n=n.replace(/[\uff01-\uff5e]/g,function(c){return String.fromCharCode(c.charCodeAt(0)-0xfee0);});
+  n=n.replace(/\s+/g,'');
+  n=n.replace(/[（(]株[）)]/g,'');
+  n=n.replace(/[（(]有[）)]/g,'');
+  n=n.replace(/[（(]合同[）)]/g,'');
+  n=n.replace(/株式会社/g,'');
+  n=n.replace(/有限会社/g,'');
+  n=n.replace(/合同会社/g,'');
+  n=n.replace(/合資会社/g,'');
+  n=n.replace(/一般社団法人/g,'');
+  n=n.replace(/一般財団法人/g,'');
+  n=n.replace(/公益社団法人/g,'');
+  n=n.replace(/公益財団法人/g,'');
+  n=n.replace(/NPO法人/gi,'');
+  return n.toLowerCase();
+}
+
+// Serialize folder creation per normalized company so parallel saves don't create duplicates
+var _folderCreateInFlight={};
+async function ensureCustomerFolderDedup(customer){
+  var key=normalizeCompany(customer.company)||('__id_'+customer.id);
+  if(_folderCreateInFlight[key])return _folderCreateInFlight[key];
+  var p=(async function(){
+    try{return await ensureCustomerFolder(customer);}
+    finally{delete _folderCreateInFlight[key];}
+  })();
+  _folderCreateInFlight[key]=p;
+  return p;
+}
+
 // ==================== Customers ====================
 // Mirrors the column order of the external customer DB (List sheet, A-Z = 26 cols)
 // No | サービス分類 | 種別タグ | 関係 | 名前 | カナ | 法人格 | 前・後 | 部署 |
@@ -1508,6 +1628,8 @@ async function deleteRow(sheet,rowIndex,ssId){
 // 担当者 | 担当者所属・役職 | 担当者携帯 | Email | URL |
 // 担当者(社内) | 与信 | ステータス | 登録日 | フォルダ
 var CUSTOMER_FIELDS=['id','serviceType','category','relation','company','companyKana','corpType','corpPosition','department','postalCode','prefecture','city','address','building','tel','fax','contact','contactTitle','contactMobile','email','url','assignee','credit','status','createdAt','folderUrl'];
+var CARD_FIELDS=['id','company','contact','department','title','tel','mobile','email','url','fax','postalCode','prefecture','city','address','building','note','scannedAt'];
+var CARD_HEADER_JA=['ID','会社名','氏名','部署','役職','TEL','携帯','Email','URL','FAX','郵便番号','都道府県','市区町村','住所','建物','備考','登録日'];
 var CUSTOMER_STATUSES=['見込み','取組中','取引中','休眠','失注','終了'];
 var CUSTOMER_RELATIONS=['買い','売り','協業','その他'];
 var CUSTOMER_CREDITS=['良好','普通','要注意','保留'];
@@ -1872,7 +1994,12 @@ function showCustomerForm(editId){
   h+='<div class="form-group"><label>与信</label><select class="form-input" id="f-credit">'+buildSelectOptions(CUSTOMER_CREDITS,c?c.credit:'',true)+'</select></div>';
   h+='<div class="form-group"><label>ステータス</label><select class="form-input" id="f-status">'+buildSelectOptions(CUSTOMER_STATUSES,c?c.status:'',true)+'</select></div></div>';
   // フォルダ (Phase 2 で自動入力)
-  h+='<div class="form-group"><label>フォルダURL</label><input class="form-input" id="f-folderUrl" value="'+v('folderUrl')+'" placeholder="（Phase2で自動入力）"></div>';
+  h+='<div class="form-group"><label>フォルダURL</label><input class="form-input" id="f-folderUrl" value="'+v('folderUrl')+'" placeholder="（自動作成されます）"></div>';
+  var folderParentSet=!!(orgConfig&&orgConfig.customerFolderParentId);
+  var folderExists=!!(c&&c.folderUrl);
+  if(folderParentSet&&!folderExists){
+    h+='<div class="form-group" style="background:#f5f9f7;padding:10px 12px;border-radius:10px"><label style="display:flex;align-items:center;gap:8px;font-weight:500;cursor:pointer"><input type="checkbox" id="f-skipFolder" style="width:16px;height:16px"><span>顧客フォルダを作成しない（名刺のみの相手など）</span></label></div>';
+  }
   h+='<button class="btn-primary" type="submit">'+(c?'更新':'登録')+'</button></form>';
   document.getElementById('modal-body').innerHTML=h;
   openModal();
@@ -1939,14 +2066,15 @@ async function saveCustomer(e,editId){
       await appendRow(sheetName,obj,CUSTOMER_FIELDS,custSsId);
     }
     var cardForUpload=pendingCardForSave; // capture before closeModal clears it
+    var skipFolder=!!(document.getElementById('f-skipFolder')&&document.getElementById('f-skipFolder').checked);
     closeModal();renderCustomers();showToast(editId?'更新しました':'登録しました');
     // Ensure Drive folder + upload card images (best-effort, non-blocking for UX)
-    if(orgConfig&&orgConfig.customerFolderParentId){
+    if(!skipFolder&&orgConfig&&orgConfig.customerFolderParentId){
       (async function(){
         try{
           var folder=null;
           if(!obj.folderUrl){
-            folder=await ensureCustomerFolder(obj);
+            folder=await ensureCustomerFolderDedup(obj);
             obj.folderUrl=folder.webViewLink||folderUrlFromId(folder.id);
             if(idx>=0&&customers[idx])customers[idx].folderUrl=obj.folderUrl;
             await updateRow(sheetName,idx,obj,CUSTOMER_FIELDS,custSsId);
@@ -2889,8 +3017,8 @@ async function setupHrSheet(){
     // Move to HR folder
     var fileInfo=await apiFetch('https://www.googleapis.com/drive/v3/files/'+ssId+'?fields=parents&supportsAllDrives=true');
     var prevParents=(fileInfo.parents||[]).join(',');
-    await fetch('https://www.googleapis.com/drive/v3/files/'+ssId+'?addParents='+hrFolderId+'&removeParents='+prevParents+'&supportsAllDrives=true',{
-      method:'PATCH',headers:{'Authorization':'Bearer '+accessToken,'Content-Type':'application/json'},body:'{}'
+    await authFetch('https://www.googleapis.com/drive/v3/files/'+ssId+'?addParents='+hrFolderId+'&removeParents='+prevParents+'&supportsAllDrives=true',{
+      method:'PATCH',headers:{'Content-Type':'application/json'},body:'{}'
     });
 
     // Write headers
@@ -3253,18 +3381,61 @@ function setScanMode(mode){
   resetCardScan();
 }
 
-function loadSavedCards(){
-  try{var s=sessionStorage.getItem('choreia_flow_cards');if(s)savedCards=JSON.parse(s);}catch(e){savedCards=[];}
+var _cardsLoadedOnce=false;
+async function loadSavedCards(force){
+  // Source of truth is the 名刺 sheet. Load once per session to avoid tab-switch races
+  // with in-flight Sheet writes (scan/import append asynchronously).
+  if(_cardsLoadedOnce&&!force){renderCardList();return;}
+  var imgsBySession={};
+  try{var s=sessionStorage.getItem('choreia_flow_card_imgs');if(s)imgsBySession=JSON.parse(s);}catch(e){}
+  if(!getSheetId()){
+    try{var s2=sessionStorage.getItem('choreia_flow_cards');if(s2)savedCards=JSON.parse(s2);}catch(e){savedCards=[];}
+    renderCardList();return;
+  }
+  try{
+    await ensureCardSheet();
+    var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+getSheetId()+'/values/'+encodeURIComponent(CARD_SHEET_NAME+'!A2:Q2000'));
+    var rows=data.values||[];
+    // Sheet order: oldest at top. In-memory we want newest first, so reverse.
+    savedCards=parseRows(rows,CARD_FIELDS).filter(function(c){return c.company||c.contact;}).reverse();
+    _cardsLoadedOnce=true;
+    // Reattach session images by id (so Drive upload still works within the same session)
+    savedCards.forEach(function(c){
+      if(c.id&&imgsBySession[c.id]){
+        if(imgsBySession[c.id]._imgFront)c._imgFront=imgsBySession[c.id]._imgFront;
+        if(imgsBySession[c.id]._imgBack)c._imgBack=imgsBySession[c.id]._imgBack;
+      }
+    });
+  }catch(e){console.error('loadSavedCards:',e);showToast('名刺の読み込みに失敗しました');}
   renderCardList();
 }
-function persistCards(){
+function persistCardImagesOnly(){
   try{
-    // Strip image data when persisting to sessionStorage to avoid quota errors;
-    // images stay in-memory on savedCards for the current session.
-    var slim=savedCards.map(function(c){var n={};for(var k in c){if(k!=='_imgFront'&&k!=='_imgBack')n[k]=c[k];}return n;});
-    sessionStorage.setItem('choreia_flow_cards',JSON.stringify(slim));
-  }catch(e){console.warn('persistCards skipped:',e.message);}
+    var map={};
+    savedCards.forEach(function(c){
+      if(c.id&&(c._imgFront||c._imgBack)){
+        map[c.id]={};
+        if(c._imgFront)map[c.id]._imgFront=c._imgFront;
+        if(c._imgBack)map[c.id]._imgBack=c._imgBack;
+      }
+    });
+    sessionStorage.setItem('choreia_flow_card_imgs',JSON.stringify(map));
+  }catch(e){console.warn('persistCardImagesOnly skipped:',e.message);}
 }
+async function appendCardToSheet(card){
+  if(!getSheetId())return;
+  await ensureCardSheet();
+  await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+getSheetId()+'/values/'+encodeURIComponent(CARD_SHEET_NAME+'!A:Q')+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({values:[toRow(card,CARD_FIELDS)]})
+  });
+}
+async function deleteCardFromSheet(rowIndex){
+  if(!getSheetId())return;
+  await deleteRow(CARD_SHEET_NAME,rowIndex,getSheetId());
+}
+// Kept for backward compat with code paths that still call persistCards()
+function persistCards(){persistCardImagesOnly();}
 
 async function handleCardFile(side,files){
   if(!files||!files.length)return;
@@ -3373,7 +3544,21 @@ async function submitCardScan(){
       }
     });
     savedCards=cards.concat(savedCards);
-    persistCards();
+    persistCardImagesOnly();
+    // Persist all new cards to the 名刺 sheet in a single batch append (faster + atomic)
+    (async function(){
+      try{
+        if(getSheetId()&&cards.length){
+          await ensureCardSheet();
+          var values=cards.map(function(c){return toRow(c,CARD_FIELDS);});
+          await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+getSheetId()+'/values/'+encodeURIComponent(CARD_SHEET_NAME+'!A:Q')+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',{
+            method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({values:values})
+          });
+          showToast('名刺シートに保存しました ('+cards.length+'件)');
+        }
+      }catch(err){console.error('card scan sheet write:',err);showToast('シート保存に失敗しました');}
+    })();
 
     // Show results
     var rh='<div class="scan-result"><h3>'+cards.length+'枚の名刺を読み取りました</h3>';
@@ -3425,7 +3610,10 @@ var CARD_CSV_HEADERS={
   '郵便番号':'postalCode','〒':'postalCode',
   '都道府県':'prefecture',
   '市区町村':'city',
-  '備考':'note','メモ':'note','Note':'note','note':'note','Notes':'note'
+  '建物':'building','Building':'building','building':'building',
+  '備考':'note','メモ':'note','Note':'note','note':'note','Notes':'note',
+  'ID':'id','id':'id',
+  '登録日':'scannedAt','scannedAt':'scannedAt'
 };
 
 function showCardCSVImportGuide(){
@@ -3530,13 +3718,14 @@ function showCardCSVMapping(parsed,fileName){
   openModal();
 }
 
-function executeCardCSVImport(){
+async function executeCardCSVImport(){
   var parsed=window._cardCsvParsed;if(!parsed)return;
   var selects=document.querySelectorAll('.card-csv-map');
   var mapping=[];
   for(var i=0;i<selects.length;i++){mapping[parseInt(selects[i].getAttribute('data-col'))]=selects[i].value;}
   var rows=parsed.rows;
   var imported=0,skipped=0;
+  var newCards=[];
   for(var r=0;r<rows.length;r++){
     var row=rows[r];
     var card={};var sei='',mei='';
@@ -3549,40 +3738,164 @@ function executeCardCSVImport(){
     }
     if(!card.contact&&(sei||mei))card.contact=((sei||'')+' '+(mei||'')).trim();
     if(!card.contact&&!card.company){skipped++;continue;}
+    card.id=card.id||generateId();
+    card.scannedAt=card.scannedAt||todayStr();
+    newCards.push(card);
     savedCards.push(card);
     imported++;
   }
-  persistCards();renderCardList();
+  renderCardList();
   closeModal();
-  showToast('名刺取込完了: '+imported+'件'+(skipped?' / '+skipped+'件スキップ':''));
+  showToast('名刺取込完了: '+imported+'件'+(skipped?' / '+skipped+'件スキップ':'')+' — シートに保存中');
+  // Write to 名刺 sheet in background
+  (async function(){
+    try{
+      if(getSheetId()&&newCards.length){
+        await ensureCardSheet();
+        var values=newCards.map(function(c){return toRow(c,CARD_FIELDS);});
+        await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+getSheetId()+'/values/'+encodeURIComponent(CARD_SHEET_NAME+'!A:Q')+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({values:values})
+        });
+        showToast('名刺シートに保存しました');
+      }
+    }catch(e){console.error('card CSV sheet write:',e);showToast('シート保存に失敗しました');}
+  })();
   window._cardCsvParsed=null;
 }
 
+var selectedCardIds={};
 function renderCardList(){
   var list=document.getElementById('card-list');
   var empty=document.getElementById('card-empty');
   var count=document.getElementById('card-count');
   if(!list)return;
   count.textContent='('+savedCards.length+'枚)';
-  if(!savedCards.length){list.innerHTML='';empty.style.display='';return;}
+  if(!savedCards.length){
+    list.innerHTML='';empty.style.display='';
+    document.getElementById('card-action-bar').style.display='none';
+    return;
+  }
   empty.style.display='none';
-  var h='';
-  savedCards.forEach(function(c,i){
-    h+='<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#f5f9f7;border-radius:10px;margin-bottom:6px">';
-    h+='<div style="flex:1;min-width:0">';
-    h+='<div style="font-weight:600;font-size:.9em">'+escapeHtml(c.contact||'(氏名なし)')+'</div>';
-    h+='<div style="font-size:.8em;color:#5a7a6a">'+escapeHtml(c.company||'')+(c.department?' / '+escapeHtml(c.department):'')+(c.title?' / '+escapeHtml(c.title):'')+'</div>';
-    if(c.tel||c.email)h+='<div style="font-size:.75em;color:#8a9e92">'+escapeHtml(c.tel||'')+' '+escapeHtml(c.email||'')+'</div>';
-    h+='</div>';
-    h+='<button class="btn-small" onclick="registerFromCard('+i+')">顧客登録</button>';
-    h+='<button class="btn-icon btn-danger" onclick="deleteCard('+i+')" style="font-size:.7em">&#128465;</button>';
-    h+='</div>';
+  var qEl=document.getElementById('card-search');
+  var q=(qEl&&qEl.value||'').toLowerCase();
+  var filtered=savedCards.map(function(c,i){return {c:c,i:i};}).filter(function(p){
+    if(!q)return true;
+    var c=p.c;
+    return ((c.company||'')+(c.contact||'')+(c.department||'')+(c.title||'')+(c.email||'')+(c.tel||'')+(c.mobile||'')+(c.address||'')+(c.note||'')).toLowerCase().indexOf(q)!==-1;
   });
+  var h='<table class="data-table" style="width:100%"><thead><tr>';
+  h+='<th style="width:32px"><input type="checkbox" id="card-select-all" onclick="toggleAllCards(this.checked)"></th>';
+  h+='<th>会社名</th><th>氏名</th><th class="hide-mobile">部署/役職</th><th>Email</th><th class="hide-mobile">TEL</th><th style="width:140px"></th>';
+  h+='</tr></thead><tbody>';
+  filtered.forEach(function(p){
+    var c=p.c,i=p.i;
+    var checked=selectedCardIds[c.id]?' checked':'';
+    h+='<tr>';
+    h+='<td onclick="event.stopPropagation()"><input type="checkbox" data-card-id="'+escapeAttr(c.id||'')+'" onchange="onCardCheckChange(this)"'+checked+'></td>';
+    h+='<td class="name-cell">'+escapeHtml(c.company||'')+'</td>';
+    h+='<td>'+escapeHtml(c.contact||'')+'</td>';
+    h+='<td class="hide-mobile">'+escapeHtml(c.department||'')+(c.title?'<div class="sub">'+escapeHtml(c.title)+'</div>':'')+'</td>';
+    h+='<td style="word-break:break-all;font-size:.85em">'+escapeHtml(c.email||'')+'</td>';
+    h+='<td class="hide-mobile">'+escapeHtml(c.tel||c.mobile||'')+'</td>';
+    h+='<td style="white-space:nowrap"><button class="btn-small" onclick="registerFromCard('+i+')" style="font-size:.7em">顧客登録</button> <button class="btn-icon btn-danger" onclick="deleteCard('+i+')" style="font-size:.7em">&#128465;</button></td>';
+    h+='</tr>';
+  });
+  h+='</tbody></table>';
+  if(!filtered.length)h+='<div style="padding:20px;text-align:center;color:#8a9e92;font-size:.85em">該当する名刺がありません</div>';
   list.innerHTML=h;
+  updateCardSelectionUi();
 }
 
-function deleteCard(idx){
-  savedCards.splice(idx,1);persistCards();renderCardList();
+function onCardCheckChange(el){
+  var id=el.getAttribute('data-card-id');if(!id)return;
+  if(el.checked)selectedCardIds[id]=true;else delete selectedCardIds[id];
+  updateCardSelectionUi();
+}
+function toggleAllCards(checked){
+  // Apply to currently filtered/visible rows only
+  var boxes=document.querySelectorAll('#card-list input[type="checkbox"][data-card-id]');
+  boxes.forEach(function(b){
+    var id=b.getAttribute('data-card-id');if(!id)return;
+    b.checked=!!checked;
+    if(checked)selectedCardIds[id]=true;else delete selectedCardIds[id];
+  });
+  updateCardSelectionUi();
+}
+function clearCardSelection(){
+  selectedCardIds={};
+  document.querySelectorAll('#card-list input[type="checkbox"]').forEach(function(b){b.checked=false;});
+  updateCardSelectionUi();
+}
+function updateCardSelectionUi(){
+  var n=Object.keys(selectedCardIds).length;
+  var bar=document.getElementById('card-action-bar');
+  var label=document.getElementById('card-selected-count');
+  if(bar)bar.style.display=n?'flex':'none';
+  if(label)label.textContent=n+'件選択中';
+  var all=document.getElementById('card-select-all');
+  if(all){
+    var boxes=document.querySelectorAll('#card-list input[type="checkbox"][data-card-id]');
+    var visibleSelected=0;
+    boxes.forEach(function(b){if(b.checked)visibleSelected++;});
+    all.checked=boxes.length>0&&visibleSelected===boxes.length;
+  }
+}
+function getSelectedCards(){
+  return savedCards.filter(function(c){return c.id&&selectedCardIds[c.id];});
+}
+function copySelectedCardEmails(){
+  var emails=getSelectedCards().map(function(c){return (c.email||'').trim();}).filter(function(e){return e;});
+  if(!emails.length){showToast('メールアドレスを持つ名刺が選択されていません');return;}
+  // Dedupe
+  var seen={},uniq=[];
+  emails.forEach(function(e){var k=e.toLowerCase();if(!seen[k]){seen[k]=true;uniq.push(e);}});
+  var text=uniq.join(', ');
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(function(){showToast(uniq.length+'件のメールをコピーしました');},function(){fallbackCopy(text,uniq.length);});
+  }else fallbackCopy(text,uniq.length);
+}
+function fallbackCopy(text,n){
+  try{var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);showToast(n+'件のメールをコピーしました');}
+  catch(e){showToast('コピーに失敗しました');}
+}
+function exportSelectedCardsCSV(){
+  var sel=getSelectedCards();
+  if(!sel.length){showToast('名刺が選択されていません');return;}
+  var esc=function(v){v=String(v==null?'':v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+  var lines=[CARD_HEADER_JA.join(',')];
+  sel.forEach(function(c){lines.push(CARD_FIELDS.map(function(f){return esc(c[f]);}).join(','));});
+  var blob=new Blob(['﻿'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var ts=new Date().toISOString().slice(0,10).replace(/-/g,'');
+  var a=document.createElement('a');a.href=url;a.download='名刺_選択_'+ts+'.csv';a.click();
+  setTimeout(function(){URL.revokeObjectURL(url);},1000);
+}
+
+async function deleteCard(idx){
+  if(idx<0||idx>=savedCards.length)return;
+  // savedCards[0] is newest (reverse of sheet). Sheet row 2 = last element.
+  var rowIndex=savedCards.length-1-idx;
+  savedCards.splice(idx,1);persistCardImagesOnly();renderCardList();
+  try{await deleteCardFromSheet(rowIndex);}catch(e){console.error('deleteCardFromSheet:',e);showToast('シートからの削除に失敗しました');}
+}
+
+function exportCardsCSV(){
+  if(!savedCards.length){showToast('出力する名刺がありません');return;}
+  function esc(v){v=(v==null?'':String(v));return /[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}
+  var lines=[CARD_HEADER_JA.join(',')];
+  savedCards.forEach(function(c){
+    lines.push(CARD_FIELDS.map(function(f){return esc(c[f]);}).join(','));
+  });
+  var bom='\ufeff';
+  var blob=new Blob([bom+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');a.href=url;
+  var ts=timestampForFile?timestampForFile():(new Date().toISOString().slice(0,10));
+  a.download='名刺_'+ts+'.csv';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},500);
+  showToast('CSV出力: '+savedCards.length+'件');
 }
 
 // Card whose images should be uploaded to the customer's folder when saveCustomer succeeds.
