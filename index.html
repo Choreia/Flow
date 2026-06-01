@@ -593,7 +593,7 @@ var tokenClient=null,accessToken=null;
 var currentUser={email:'',name:'',domain:'',photo:''};
 var orgConfig=null;
 // Data arrays (from Sheets)
-var customers=[],deals=[],activities=[];
+var customers=[],deals=[],activities=[],phaseHistory=[];
 var customerMaster={services:[],categories:[],members:[]}; // dropdown values from Master sheet
 var setupDriveId='',setupDriveName='',setupFolderId='',setupFolderName='';
 var setupFolderPath=[];
@@ -625,6 +625,7 @@ function formatDate(d){if(!d)return '';try{var dt=new Date(d);if(isNaN(dt))retur
 function formatCurrency(n,unit){if(!n&&n!==0)return '';var s=Number(n).toLocaleString('ja-JP')+'円';if(unit)s+='/'+unit;return s;}
 function generateId(){return Date.now().toString(36)+Math.random().toString(36).substr(2,5);}
 function todayStr(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function nowStr(){var d=new Date();var p=function(n){return String(n).padStart(2,'0');};return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());}
 
 var _tokenRefreshResolver=null,_pendingTokenRefresh=null;
 function refreshAccessToken(){
@@ -706,7 +707,7 @@ function handleSignIn(){if(!tokenClient){showToast('準備中');return;}tokenCli
 function handleSignOut(){
   if(accessToken)google.accounts.oauth2.revoke(accessToken);
   accessToken=null;localStorage.removeItem('choreia_token');clearCachedConfig();
-  orgConfig=null;customers=[];deals=[];activities=[];savedCards=[];_cardsLoadedOnce=false;_cardSheetEnsured=false;
+  orgConfig=null;customers=[];deals=[];activities=[];phaseHistory=[];savedCards=[];_cardsLoadedOnce=false;_cardSheetEnsured=false;_phaseHistorySheetEnsured=false;
   document.getElementById('auth-out').style.display='';document.getElementById('auth-in').style.display='none';
   showView('welcome');
 }
@@ -1522,7 +1523,8 @@ async function loadAllData(){
       customerMaster={services:[],categories:[],members:[]};
     }
     deals.forEach(function(d){d.amount=d.amount?Number(d.amount):0;});
-    console.log('loadAllData: customers='+customers.length+' deals='+deals.length+' activities='+activities.length);
+    await loadPhaseHistory();
+    console.log('loadAllData: customers='+customers.length+' deals='+deals.length+' activities='+activities.length+' phaseHistory='+phaseHistory.length);
   }catch(e){console.error('loadAllData error:',e);showToast('データの読み込みに失敗しました');}
   console.timeEnd('loadAllData');
 }
@@ -2250,6 +2252,43 @@ async function deleteCustomer(id){
 
 // ==================== Deals ====================
 var DEAL_FIELDS=['id','customerId','company','name','status','amount','amountUnit','assignee','startDate','deadline','memo','updatedAt','lineItems'];
+
+// ==================== Phase change history ====================
+// フェーズ（ステータス）変更を「誰がいつ」記録する監査ログ。案件と同じFlowスプレッドシート内の専用シートに追記。
+var PHASE_HISTORY_SHEET_NAME='フェーズ履歴';
+var PHASE_HISTORY_FIELDS=['id','dealId','dealName','fromStatus','toStatus','changedBy','changedByEmail','changedAt'];
+var PHASE_HISTORY_HEADER_JA=['ID','案件ID','案件名','変更前','変更後','変更者','変更者メール','変更日時'];
+var _phaseHistorySheetEnsured=false;
+
+async function ensurePhaseHistorySheet(){
+  if(_phaseHistorySheetEnsured)return;
+  var id=getSheetId();if(!id)return;
+  var meta=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+'?fields=sheets.properties');
+  var exists=(meta.sheets||[]).some(function(s){return s.properties.title===PHASE_HISTORY_SHEET_NAME;});
+  if(!exists){
+    await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+':batchUpdate',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({requests:[{addSheet:{properties:{title:PHASE_HISTORY_SHEET_NAME,gridProperties:{frozenRowCount:1}}}}]})
+    });
+    await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+'/values/'+encodeURIComponent(PHASE_HISTORY_SHEET_NAME+'!A1')+'?valueInputOption=RAW',{
+      method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({values:[PHASE_HISTORY_HEADER_JA]})
+    });
+  }
+  _phaseHistorySheetEnsured=true;
+}
+
+async function loadPhaseHistory(){
+  var id=getSheetId();if(!id){phaseHistory=[];return;}
+  try{
+    var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+'/values/'+encodeURIComponent(PHASE_HISTORY_SHEET_NAME+'!A2:H2000'));
+    phaseHistory=parseRows(data.values||[],PHASE_HISTORY_FIELDS).filter(function(x){return x.id;});
+    _phaseHistorySheetEnsured=true; // シートが存在することを確認できた
+  }catch(e){
+    // シート未作成（初回フェーズ変更時に自動生成される）
+    phaseHistory=[];
+  }
+}
 var AMOUNT_UNITS=['','月','年','式','日','台','個'];
 var LINE_ITEM_UNITS=['式','月','年','日','台','個','回','回/月','人','人月','時間','kg','本','枚','セット','件'];
 
@@ -2485,6 +2524,22 @@ function showDealDetail(id){
   });
   h+='</div></div>';
 
+  // Phase change history - 誰がいつフェーズを変更したか
+  var ph=phaseHistory.filter(function(x){return x.dealId===id;}).slice().sort(function(a,b){return String(b.changedAt).localeCompare(String(a.changedAt));});
+  h+='<div style="margin-bottom:16px"><label style="font-size:.8em;font-weight:600;color:#3a5a4a;display:block;margin-bottom:6px">フェーズ変更履歴 ('+ph.length+')</label>';
+  if(ph.length){
+    ph.forEach(function(x){
+      h+='<div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:#f5f9f7;border-radius:8px;margin-bottom:4px;font-size:.8em;flex-wrap:wrap">';
+      if(x.fromStatus){h+='<span class="status-badge '+escapeAttr(x.fromStatus)+'" style="font-size:.7em">'+escapeHtml(getStatusLabel(x.fromStatus))+'</span>';}
+      else{h+='<span style="color:#5a7a6a;font-size:.85em">新規</span>';}
+      h+='<span style="color:#5a7a6a">→</span>';
+      h+='<span class="status-badge '+escapeAttr(x.toStatus)+'" style="font-size:.7em">'+escapeHtml(getStatusLabel(x.toStatus))+'</span>';
+      h+='<span style="flex:1;min-width:0;text-align:right;color:#5a7a6a">'+escapeHtml(x.changedBy||'')+' | '+escapeHtml(x.changedAt||'')+'</span>';
+      h+='</div>';
+    });
+  }else{h+='<p style="font-size:.8em;color:#5a7a6a;margin:0">履歴なし</p>';}
+  h+='</div>';
+
   // Document section - single file per deal
   var dealDocs=getDealDocuments(id);
   h+='<div style="margin-bottom:16px"><label style="font-size:.8em;font-weight:600;color:#3a5a4a;display:block;margin-bottom:6px">帳票</label>';
@@ -2523,9 +2578,24 @@ function showDealDetail(id){
 async function changeDealStatus(id,status){
   var idx=deals.findIndex(function(x){return x.id===id});
   if(idx<0)return;
+  var prev=deals[idx].status;
+  if(prev===status)return; // 同じフェーズなら何もしない（履歴も残さない）
   deals[idx].status=status;deals[idx].updatedAt=todayStr();
-  try{await updateRow('案件',idx,deals[idx],DEAL_FIELDS);showDealDetail(id);renderDeals();showToast(getStatusLabel(status)+'に変更');}
-  catch(e){showToast('更新に失敗しました');}
+  try{await updateRow('案件',idx,deals[idx],DEAL_FIELDS);}
+  catch(e){deals[idx].status=prev;showToast('更新に失敗しました');return;}
+  // フェーズ変更履歴を記録（誰がいつ変更したか）
+  var entry={
+    id:generateId(),dealId:id,dealName:deals[idx].name||'',
+    fromStatus:prev,toStatus:status,
+    changedBy:currentUser.name||'',changedByEmail:currentUser.email||'',
+    changedAt:nowStr()
+  };
+  phaseHistory.push(entry); // 先にUIへ反映（永続化失敗してもフェーズ変更自体は成立済み）
+  showDealDetail(id);renderDeals();showToast(getStatusLabel(status)+'に変更');
+  try{
+    await ensurePhaseHistorySheet();
+    await appendRow(PHASE_HISTORY_SHEET_NAME,entry,PHASE_HISTORY_FIELDS);
+  }catch(e){console.error('phase history append failed',e);showToast('履歴の保存に失敗しました');}
 }
 
 function isDealOwner(d){
