@@ -1120,9 +1120,11 @@ async function detectTemplateLayout(ssId,sheetName){
     var row=rows[r]||[];
     for(var c=0;c<row.length;c++){
       var v=String(row[c]||'');
-      if(v.indexOf('見積番号')!==-1||v.indexOf('番号')!==-1){layout.docNumCol=colLetter(c+2);layout.docNumRow=r+1;}
-      if(v.indexOf('見積日')!==-1||v.indexOf('発行日')!==-1||v.indexOf('納品日')!==-1||v.indexOf('請求日')!==-1){layout.dateRow=r+1;layout.dateCol=colLetter(c+2);}
-      if(v==='御中'){layout.companyRow=r+1;}
+      var vn=v.replace(/[\s　]/g,''); // 全角/半角スペース除去（"見 積 日"等の表記ゆれ対策）
+      // "登録番号"(会社情報欄)を見積番号と誤検出してdocNumRowを奪われないよう除外
+      if(vn.indexOf('登録番号')===-1&&(vn.indexOf('見積番号')!==-1||vn.indexOf('請求番号')!==-1||vn.indexOf('納品番号')!==-1||vn.indexOf('番号')!==-1)){layout.docNumCol=colLetter(c+2);layout.docNumRow=r+1;}
+      if(vn.indexOf('見積日')!==-1||vn.indexOf('発行日')!==-1||vn.indexOf('納品日')!==-1||vn.indexOf('請求日')!==-1){layout.dateRow=r+1;layout.dateCol=colLetter(c+2);}
+      if(vn==='御中'){layout.companyRow=r+1;}
       if(v==='件名：'){layout.subjectRow=r+1;layout.subjectCol=colLetter(c+2);}
       if(v.indexOf('担当')!==-1&&r>=6){layout.assigneeRow=r+1;layout.assigneeCol=colLetter(c+2);}
     }
@@ -1244,7 +1246,7 @@ async function fillAllSheets(ssId,cust,deal,docNum){
       var updates=[];
       function addCell(cell,val){updates.push({range:sheetName+'!'+cell,values:[[val]]});}
       addCell('A'+layout.companyRow,(cust.company||'')+(cust.corpType?(' '+cust.corpType):''));
-      if(layout.contactRow)addCell('B'+(layout.contactRow+1),(cust.contact||''));
+      // 担当者名は宛先に入れない（御中行は会社名のみ）— 山﨑さん要望 2026-06
       addCell(layout.docNumCol+layout.docNumRow,docNum);
       addCell((layout.dateCol||layout.docNumCol)+(layout.dateRow||layout.docNumRow+1),fmtDate);
       addCell(layout.subjectCol+layout.subjectRow,deal.name||'');
@@ -2484,7 +2486,7 @@ function showDealDetail(id){
   var d=deals.find(function(x){return x.id===id});if(!d)return;
   var cust=customers.find(function(x){return x.id===d.customerId})||{};
   var relatedActivities=activities.filter(function(a){return a.dealId===id});
-  var h='<h2>'+escapeHtml(d.name)+'<div><button class="btn-icon" onclick="closeDetail();showDealForm(\''+escapeAttr(id)+'\')">&#9998;</button>'+(isDealOwner(d)?'<button class="btn-icon btn-danger" onclick="deleteDeal(\''+escapeAttr(id)+'\')">&#128465;</button>':'')+'</div></h2>';
+  var h='<h2>'+escapeHtml(d.name)+'<div><button class="btn-icon" onclick="closeDetail();showDealForm(\''+escapeAttr(id)+'\')">&#9998;</button><button class="btn-icon btn-danger" onclick="deleteDeal(\''+escapeAttr(id)+'\')">&#128465;</button></div></h2>';
   h+='<div style="margin-bottom:12px"><span class="status-badge '+d.status+'" style="font-size:.85em">'+getStatusLabel(d.status)+'</span></div>';
   h+='<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.9em;margin-bottom:16px">';
   h+='<span style="color:#5a7a6a">顧客</span><span style="font-weight:600">'+escapeHtml(d.company)+'</span>';
@@ -2552,6 +2554,7 @@ function showDealDetail(id){
       h+='<div style="font-size:.75em;color:#5a7a6a">'+escapeHtml(doc.assignee||'')+' | '+formatDate(doc.date)+'</div></div>';
       if(doc.ssId)h+='<a href="https://docs.google.com/spreadsheets/d/'+escapeAttr(doc.ssId)+'" target="_blank" class="btn-small" style="background:#1a6b4a;text-decoration:none;font-size:.7em">開く</a>';
       h+='<button class="btn-small" onclick="copyDealDocument(\''+escapeAttr(id)+'\',\''+escapeAttr(doc.ssId)+'\')" style="background:#5a7a6a;font-size:.7em">コピー</button>';
+      h+='<button class="btn-small" onclick="deleteDealDocument(\''+escapeAttr(id)+'\',\''+escapeAttr(doc.actId)+'\',\''+escapeAttr(doc.ssId)+'\')" style="background:#c0392b;font-size:.7em">削除</button>';
       h+='</div>';
     });
   }
@@ -2603,14 +2606,47 @@ function isDealOwner(d){
   if(isAdmin())return true;
   return d.assignee===currentUser.name;
 }
+async function trashDriveFile(fileId){
+  if(!fileId)return;
+  await apiFetch('https://www.googleapis.com/drive/v3/files/'+fileId+'?supportsAllDrives=true',{
+    method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({trashed:true})
+  });
+}
 async function deleteDeal(id){
   var d=deals.find(function(x){return x.id===id});
-  if(!isDealOwner(d)){showToast('削除は担当者のみ可能です');return;}
-  if(!confirm('この案件を削除しますか？'))return;
-  var idx=deals.findIndex(function(x){return x.id===id});
-  if(idx<0)return;
-  try{await deleteRow('案件',idx);deals.splice(idx,1);closeDetail();renderDeals();showToast('削除しました');}
-  catch(e){showToast('削除に失敗しました');}
+  if(!d)return;
+  // 紐づく活動記録・帳票（帳票も type:'other' の活動レコード）を集計
+  var relActIdx=[];
+  activities.forEach(function(a,i){if(a.dealId===id)relActIdx.push(i);});
+  var docs=getDealDocuments(id);
+  var msg='この案件を削除しますか？';
+  if(relActIdx.length)msg+='\n紐づく活動記録・帳票 '+relActIdx.length+' 件も削除します';
+  if(docs.length)msg+='（帳票 '+docs.length+' 件のスプレッドシートはゴミ箱へ移動）';
+  msg+='。';
+  if(!confirm(msg))return;
+  try{
+    // 1. 帳票スプレッドシートをゴミ箱へ（復元可能）
+    for(var j=0;j<docs.length;j++){if(docs[j].ssId){try{await trashDriveFile(docs[j].ssId);}catch(e){console.warn('trash skip:',docs[j].ssId,e);}}}
+    // 2. 活動記録・帳票レコードを降順で削除（行インデックスのズレ防止）
+    relActIdx.sort(function(a,b){return b-a;});
+    for(var k=0;k<relActIdx.length;k++){await deleteRow('活動',relActIdx[k]);activities.splice(relActIdx[k],1);}
+    // 3. 案件本体を削除
+    var idx=deals.findIndex(function(x){return x.id===id;});
+    if(idx>=0){await deleteRow('案件',idx);deals.splice(idx,1);}
+    closeDetail();renderDeals();renderActivities();
+    showToast('削除しました'+(relActIdx.length?'（関連 '+relActIdx.length+' 件含む）':''));
+  }catch(e){showToast('削除に失敗しました');console.error('deleteDeal error:',e);}
+}
+async function deleteDealDocument(dealId,actId,ssId){
+  if(!confirm('この帳票を削除しますか？\nスプレッドシート本体はゴミ箱へ移動します（復元可能）。'))return;
+  var idx=activities.findIndex(function(x){return x.id===actId;});
+  if(idx<0){showToast('帳票が見つかりません');return;}
+  var fileOk=true;
+  if(ssId){try{await trashDriveFile(ssId);}catch(e){fileOk=false;console.warn('trash file failed:',ssId,e);}}
+  try{await deleteRow('活動',idx);activities.splice(idx,1);}
+  catch(e){showToast('削除に失敗しました');console.error('deleteDealDocument error:',e);return;}
+  showToast(fileOk?'帳票を削除しました':'帳票を削除しました（ファイルは残存）');
+  renderActivities();showDealDetail(dealId);
 }
 
 // ==================== Activities ====================
