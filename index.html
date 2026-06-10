@@ -1171,7 +1171,7 @@ async function copyDealDocument(dealId,sourceSsId){
 
   try{
     showToast('帳票をコピー中...');
-    var docNum=generateDocNum(cust,dealId);
+    var docNum=await generateQuoteNumber();
     var fileName=buildDocFileName(cust,docNum);
 
     var copy=await apiFetch('https://www.googleapis.com/drive/v3/files/'+sourceSsId+'/copy?supportsAllDrives=true',{
@@ -1184,6 +1184,7 @@ async function copyDealDocument(dealId,sourceSsId){
     await fillAllSheets(newId,cust,deal,docNum);
     await moveToCustomerFolder(newId,cust);
     await recordDocActivity(docNum,newId,deal,cust,dealId);
+    try{await appendQuoteRegistry(docNum,deal,cust,newId);}catch(e){console.error('registry append failed',e);showToast('注意: 見積管理表への記録に失敗。'+docNum+' を手動追記してください');}
 
     showToast('帳票をコピーしました');
     window.open('https://docs.google.com/spreadsheets/d/'+newId,'_blank');
@@ -1194,10 +1195,32 @@ async function copyDealDocument(dealId,sourceSsId){
   }
 }
 
-function generateDocNum(cust,dealId){
-  var existing=getDealDocuments(dealId);
-  var serial=String(existing.length+1).padStart(5,'0');
-  return (cust.id||'000000')+'-'+serial;
+// ==================== 見積番号 採番（実績取引管理表）====================
+// 山﨑さん運用の通番シート。番号 = M2 + YY + MM + 3桁連番。月ごとにリセット（(A)案 2026-06確定）
+var QUOTE_REGISTRY_SSID='1cGshH7VRjKykJCsowPoK1MTwj5KExgLTR9SrQJmtEOM';
+var QUOTE_REGISTRY_SHEET='見積管理表'; // A空/B=見積番号/C=発行日/D=取引先名/E=商品/F=金額(税抜)/G=有効期限/H=担当名/I=備考/J=URL
+// 当月(YYMM)の最大連番+1で次番号を採番。月が変われば001から。
+async function generateQuoteNumber(){
+  var d=new Date();
+  var yymm=String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,'0');
+  var range=encodeURIComponent(QUOTE_REGISTRY_SHEET+'!B:B');
+  var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+QUOTE_REGISTRY_SSID+'/values/'+range);
+  var maxSerial=0;
+  (data.values||[]).forEach(function(r){
+    var m=String(r[0]||'').trim().match(/^M2(\d{4})(\d{3})$/); // M2 + YYMM + NNN
+    if(m&&m[1]===yymm){var n=parseInt(m[2],10);if(n>maxSerial)maxSerial=n;}
+  });
+  return 'M2'+yymm+String(maxSerial+1).padStart(3,'0');
+}
+// 採番した見積番号を見積管理表へ1行追記（A列は空、B列〜）
+async function appendQuoteRegistry(docNum,deal,cust,newId){
+  var d=new Date();
+  var ymd=d.getFullYear()+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0');
+  var row=['',docNum,ymd,(cust&&cust.company)||'','',(deal&&deal.amount)||'','',(deal&&deal.assignee)||currentUser.name||'',(deal&&deal.name)||'','https://docs.google.com/spreadsheets/d/'+newId];
+  await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+QUOTE_REGISTRY_SSID+'/values/'+encodeURIComponent(QUOTE_REGISTRY_SHEET+'!A:J')+':append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({values:[row]})
+  });
 }
 
 function buildDocFileName(cust,docNum){
@@ -1247,7 +1270,8 @@ async function fillAllSheets(ssId,cust,deal,docNum){
       function addCell(cell,val){updates.push({range:sheetName+'!'+cell,values:[[val]]});}
       addCell('A'+layout.companyRow,(cust.company||'')+(cust.corpType?(' '+cust.corpType):''));
       // 担当者名は宛先に入れない（御中行は会社名のみ）— 山﨑さん要望 2026-06
-      addCell(layout.docNumCol+layout.docNumRow,docNum);
+      // 請求書タブは見積番号+"I"（見積/納品は見積番号そのまま）— 山﨑さん要望 2026-06
+      addCell(layout.docNumCol+layout.docNumRow,(sheetName.indexOf('請求')!==-1)?docNum+'I':docNum);
       addCell((layout.dateCol||layout.docNumCol)+(layout.dateRow||layout.docNumRow+1),fmtDate);
       addCell(layout.subjectCol+layout.subjectRow,deal.name||'');
       if(layout.assigneeCol)addCell(layout.assigneeCol+layout.assigneeRow,deal.assignee||currentUser.name||'');
@@ -1271,7 +1295,7 @@ async function createDealDocument(dealId){
   try{
     showToast('帳票を作成中...');
 
-    var docNum=generateDocNum(cust,dealId);
+    var docNum=await generateQuoteNumber();
     var fileName=buildDocFileName(cust,docNum);
 
     // 1. Copy the entire template spreadsheet (all sheets: 見積書, 納品書, 請求書)
@@ -1354,6 +1378,7 @@ async function createDealDocument(dealId){
 
     // 5. Record activity
     await recordDocActivity(docNum,newId,deal,cust,dealId);
+    try{await appendQuoteRegistry(docNum,deal,cust,newId);}catch(e){console.error('registry append failed',e);showToast('注意: 見積管理表への記録に失敗。'+docNum+' を手動追記してください');}
 
     showToast('帳票を作成しました');
     window.open('https://docs.google.com/spreadsheets/d/'+newId,'_blank');
