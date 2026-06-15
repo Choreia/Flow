@@ -82,13 +82,39 @@ textarea.form-input{resize:vertical;min-height:80px}
 /* Status badges */
 .status-badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:.75em;font-weight:600;white-space:nowrap}
 .status-badge.lead{background:#e8f0ff;color:#2563eb}
-.status-badge.proposal{background:#fef3c7;color:#d97706}
+.status-badge.first{background:#e0f7fa;color:#0891b2}
+.status-badge.demo{background:#fef3c7;color:#d97706}
+.status-badge.proposal{background:#d7f1ee;color:#0e7c78}
 .status-badge.negotiation{background:#fde8e8;color:#dc2626}
+.status-badge.review{background:#f3e8ff;color:#7c3aed}
 .status-badge.ordered{background:#d1fae5;color:#059669}
 .status-badge.delivered{background:#e0e8e4;color:#3a5a4a}
-.status-badge.invoiced{background:#f3e8ff;color:#7c3aed}
+.status-badge.invoiced{background:#fae8ff;color:#9333ea}
 .status-badge.paid{background:#d1fae5;color:#065f46}
 .status-badge.lost{background:#f1f1f1;color:#888}
+
+/* MM月次レポート */
+.rep-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.rep-head .ttl{font-weight:800;font-size:1.1em;color:#0d4a30}
+.rep-tag{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:9px;background:#eef6f1;border:1px solid #cfe3d8;color:#1a6b4a;font-size:.82em;font-weight:700}
+.rep-chips{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.rep-chip{padding:6px 12px;border-radius:20px;border:1px solid #c8d8cf;background:#fff;color:#5a7a6a;font-size:.82em;font-weight:600;cursor:pointer}
+.rep-chip.active{background:#1a6b4a;border-color:#1a6b4a;color:#fff}
+.rep-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+.rep-kpi{background:#f7fbf9;border:1px solid #e3eee8;border-radius:14px;padding:14px}
+.rep-kpi .lab{font-size:.76em;color:#5a7a6a;font-weight:700}
+.rep-kpi .big{font-size:1.4em;font-weight:800;color:#0d4a30;margin-top:2px}
+.rep-kpi .big small{font-size:.52em;color:#8aa89a;font-weight:600}
+.rep-kpi .bar{height:6px;border-radius:4px;background:#e3eee8;margin-top:8px;overflow:hidden}
+.rep-kpi .bar>i{display:block;height:100%;background:linear-gradient(90deg,#1a6b4a,#37a06e)}
+.rep-goal{width:64px;padding:3px 7px;border:1px solid #d8b94a;border-radius:7px;background:#fffdf0;color:#7a5a10;font-weight:700;text-align:right;font-family:inherit;font-size:.95em}
+.rep-rate{display:inline-block;padding:2px 9px;border-radius:20px;font-weight:700;font-size:.92em}
+.rep-rate.z{background:#f1f1f1;color:#999}.rep-rate.m{background:#fef3c7;color:#b45309}.rep-rate.k{background:#d1fae5;color:#059669}
+.rep-tot td{font-weight:800;background:#eef6f1 !important;border-top:2px solid #c8d8cf}
+.rep-num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.rep-edit{width:100%;min-height:74px;padding:10px 12px;border:1px solid #b9d3c7;border-radius:10px;background:#f7fbf9;font-family:inherit;font-size:.9em;line-height:1.6;resize:vertical}
+.rep-note{font-size:.72em;color:#8aa89a;margin-top:6px}
+@media(max-width:760px){.rep-kpis{grid-template-columns:repeat(2,1fr)}}
 
 /* Pipeline */
 .pipeline{display:flex;gap:12px;overflow-x:auto;padding-bottom:12px;min-height:200px}
@@ -361,6 +387,7 @@ textarea.form-input{resize:vertical;min-height:80px}
       <button class="tab" id="tab-customers" onclick="switchTab('customers')">顧客</button>
       <button class="tab" id="tab-deals" onclick="switchTab('deals')">案件</button>
       <button class="tab" id="tab-activities" onclick="switchTab('activities')">活動</button>
+      <button class="tab" id="tab-report" onclick="switchTab('report')">MMレポート</button>
       <button class="tab" id="tab-cards" onclick="switchTab('cards')">名刺</button>
       <button class="tab" id="tab-hr" onclick="switchTab('hr')" style="display:none">人事</button>
     </div>
@@ -449,6 +476,11 @@ textarea.form-input{resize:vertical;min-height:80px}
         <div class="title">活動記録がありません</div>
         <div class="desc">「+ 記録」ボタンから活動を記録しましょう</div>
       </div>
+    </div>
+
+    <!-- MM月次レポート panel -->
+    <div id="panel-report" style="display:none">
+      <div id="report-content"></div>
     </div>
 
     <!-- Cards (Business card) panel -->
@@ -598,17 +630,38 @@ var customerMaster={services:[],categories:[],members:[]}; // dropdown values fr
 var setupDriveId='',setupDriveName='',setupFolderId='',setupFolderName='';
 var setupFolderPath=[];
 
-// Deal statuses
+// Deal statuses (master = union of legacy + 石井さん版MMファネル)
 var DEAL_STATUSES=[
   {key:'lead',label:'リード',color:'#2563eb'},
-  {key:'proposal',label:'提案中',color:'#d97706'},
-  {key:'negotiation',label:'交渉中',color:'#dc2626'},
+  {key:'first',label:'初回接触',color:'#0891b2'},
+  {key:'demo',label:'デモ',color:'#d97706'},
+  {key:'proposal',label:'提案中',color:'#0ea5a4'},
+  {key:'negotiation',label:'商談中',color:'#dc2626'},
+  {key:'review',label:'稟議中',color:'#7c3aed'},
   {key:'ordered',label:'受注',color:'#059669'},
   {key:'delivered',label:'納品済',color:'#3a5a4a'},
-  {key:'invoiced',label:'請求済',color:'#7c3aed'},
+  {key:'invoiced',label:'請求済',color:'#9333ea'},
   {key:'paid',label:'入金済',color:'#065f46'},
   {key:'lost',label:'失注',color:'#888'}
 ];
+// フェーズ集合を商材で切替（MM=石井さん版 / その他=従来）。請求フローを壊さないため受注以降は両方に残す。
+var MM_STATUS_KEYS=['lead','first','demo','negotiation','review','ordered','delivered','invoiced','paid','lost'];
+var DEFAULT_STATUS_KEYS=['lead','proposal','negotiation','ordered','delivered','invoiced','paid','lost'];
+var WON_STATUS_KEYS=['ordered','delivered','invoiced','paid']; // 受注以降＝実績
+function statusKeysForProduct(product){return product==='Mobile Mover'?MM_STATUS_KEYS:DEFAULT_STATUS_KEYS;}
+
+// 商材タグ（MM案件の抽出に使用）
+var PRODUCT_OPTIONS=['','Mobile Mover','とまっくす','I-SCH','インド進出サポート','人財派遣','受託開発','その他'];
+function isMMDeal(d){
+  if(d&&d.product)return d.product==='Mobile Mover';
+  var n=((d&&d.name)||'').toLowerCase();
+  return n.indexOf('mobile mover')!==-1||n.indexOf('ｍｏｂｉｌｅ')!==-1||/(^|[^a-z])mm([^a-z]|$)/.test(n)||n.indexOf('ＭＭ')!==-1;
+}
+// 担当名の名寄せ（英名/表記ゆれ → 浦・山﨑 等）
+var ASSIGNEE_ALIASES={'kensuke yamazaki':'山﨑','k.yamazaki':'山﨑','山崎':'山﨑','山﨑':'山﨑','yamazaki':'山﨑','ura shingo':'浦','shingo ura':'浦','浦':'浦','ura':'浦','yuriko kato':'加藤','y.kato':'加藤','加藤':'加藤','kato':'加藤','jayant kumar':'Jayant Kumar','hirokazu ishii':'石井','hiro ishii':'石井','石井':'石井','ishii':'石井'};
+function normalizeAssignee(name){if(!name)return '';var k=String(name).trim().toLowerCase();return ASSIGNEE_ALIASES[k]||String(name).trim();}
+// 明細の台数（単位=台）合計
+function dealUnits(d){var li=parseDealLineItems(d&&d.lineItems),u=0;li.forEach(function(x){if((x.unit||'')==='台')u+=Number(x.qty)||0;});return u;}
 var ACTIVITY_TYPES=[
   {key:'visit',label:'訪問',icon:'\u{1F6B6}'},
   {key:'call',label:'電話',icon:'\u{1F4DE}'},
@@ -723,7 +776,7 @@ function showView(name){
 }
 function switchTab(tab){
   currentTab=tab;
-  ['dashboard','customers','deals','activities','cards','hr'].forEach(function(t){
+  ['dashboard','customers','deals','activities','report','cards','hr'].forEach(function(t){
     var tabEl=document.getElementById('tab-'+t);
     var panelEl=document.getElementById('panel-'+t);
     if(tabEl)tabEl.classList.toggle('active',tab===t);
@@ -733,6 +786,7 @@ function switchTab(tab){
   if(tab==='customers')renderCustomers();
   if(tab==='deals')renderDeals();
   if(tab==='activities')renderActivities();
+  if(tab==='report')renderReport();
   if(tab==='hr')renderHrEvaluations();
   if(tab==='cards')loadSavedCards();
   updateBackBtn();
@@ -866,7 +920,7 @@ async function confirmSetup(){
     // Write headers
     var headers=[
       {range:'顧客!A1:J1',values:[['ID','会社名','担当者','部署','役職','TEL','メール','住所','メモ','登録日']]},
-      {range:'案件!A1:K1',values:[['ID','顧客ID','会社名','案件名','ステータス','金額','担当者','開始日','期限','メモ','更新日']]},
+      {range:'案件!A1:N1',values:[['ID','顧客ID','会社名','案件名','ステータス','金額','単位','担当者','開始日','期限','メモ','更新日','明細','商材']]},
       {range:'活動!A1:H1',values:[['ID','顧客ID','会社名','案件ID','種別','内容','担当者','日時']]}
     ];
     await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+ssId+'/values:batchUpdate',{
@@ -1514,7 +1568,7 @@ async function loadAllData(){
     if(useExternalCustomers){
       // Fetch customer DB and Flow spreadsheet in parallel
       var pCust=apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+custSsId+'/values:batchGet?ranges='+encodeURIComponent('List!A2:Z500')+'&ranges='+encodeURIComponent('Master!A2:D200'));
-      var pFlow=apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values:batchGet?ranges='+encodeURIComponent('案件!A2:K1000')+'&ranges='+encodeURIComponent('活動!A2:H1000'));
+      var pFlow=apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values:batchGet?ranges='+encodeURIComponent('案件!A2:N1000')+'&ranges='+encodeURIComponent('活動!A2:H1000'));
       var dataA=await pCust;
       var rangesA=dataA.valueRanges||[];
       customers=parseRows(rangesA[0]&&rangesA[0].values||[],CUSTOMER_FIELDS);
@@ -1533,11 +1587,11 @@ async function loadAllData(){
       // Deals + activities (parallel fetch was started above)
       var dataB=await pFlow;
       var rangesB=dataB.valueRanges||[];
-      deals=parseRows(rangesB[0]&&rangesB[0].values||[],['id','customerId','company','name','status','amount','assignee','startDate','deadline','memo','updatedAt']);
+      deals=parseRows(rangesB[0]&&rangesB[0].values||[],DEAL_FIELDS);
       activities=parseRows(rangesB[1]&&rangesB[1].values||[],['id','customerId','company','dealId','type','content','assignee','datetime']);
     }else{
       // Legacy: everything in single Flow spreadsheet
-      var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values:batchGet?ranges='+encodeURIComponent('顧客!A2:J1000')+'&ranges='+encodeURIComponent('案件!A2:K1000')+'&ranges='+encodeURIComponent('活動!A2:H1000'));
+      var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values:batchGet?ranges='+encodeURIComponent('顧客!A2:J1000')+'&ranges='+encodeURIComponent('案件!A2:N1000')+'&ranges='+encodeURIComponent('活動!A2:H1000'));
       var ranges=data.valueRanges||[];
       // Legacy schema: map old fields into new field names where possible
       var legacy=parseRows(ranges[0]&&ranges[0].values||[],['id','company','contact','department','contactTitle','tel','email','address','memo','createdAt']);
@@ -1545,7 +1599,7 @@ async function loadAllData(){
         var n={};CUSTOMER_FIELDS.forEach(function(f){n[f]=c[f]||'';});
         return n;
       });
-      deals=parseRows(ranges[1]&&ranges[1].values||[],['id','customerId','company','name','status','amount','assignee','startDate','deadline','memo','updatedAt']);
+      deals=parseRows(ranges[1]&&ranges[1].values||[],DEAL_FIELDS);
       activities=parseRows(ranges[2]&&ranges[2].values||[],['id','customerId','company','dealId','type','content','assignee','datetime']);
       customerMaster={services:[],categories:[],members:[]};
     }
@@ -2278,7 +2332,7 @@ async function deleteCustomer(id){
 }
 
 // ==================== Deals ====================
-var DEAL_FIELDS=['id','customerId','company','name','status','amount','amountUnit','assignee','startDate','deadline','memo','updatedAt','lineItems'];
+var DEAL_FIELDS=['id','customerId','company','name','status','amount','amountUnit','assignee','startDate','deadline','memo','updatedAt','lineItems','product'];
 
 // ==================== Phase change history ====================
 // フェーズ（ステータス）変更を「誰がいつ」記録する監査ログ。案件と同じFlowスプレッドシート内の専用シートに追記。
@@ -2316,6 +2370,61 @@ async function loadPhaseHistory(){
     phaseHistory=[];
   }
 }
+
+// ==================== MM月次レポート: 目標・メモ シート ====================
+var MM_GOAL_SHEET='MM月次目標';
+var MM_GOAL_FIELDS=['id','month','assignee','targetUnits','targetSales','updatedAt'];
+var MM_GOAL_HEADER=['ID','月','担当','目標台数','目標売上(万円)','更新日'];
+var MM_MEMO_SHEET='MM月次メモ';
+var MM_MEMO_FIELDS=['id','month','pickup','review','issues','updatedAt'];
+var MM_MEMO_HEADER=['ID','月','ピックアップ','振り返り','懸案事項','更新日'];
+var mmGoals=[],mmMemos=[],_mmSheetsEnsured=false;
+
+async function ensureSheetWithHeader(sheetName,header){
+  var id=getSheetId();if(!id)return;
+  var meta=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+'?fields=sheets.properties');
+  var exists=(meta.sheets||[]).some(function(s){return s.properties.title===sheetName;});
+  if(!exists){
+    await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+':batchUpdate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requests:[{addSheet:{properties:{title:sheetName,gridProperties:{frozenRowCount:1}}}}]})});
+    await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+'/values/'+encodeURIComponent(sheetName+'!A1')+'?valueInputOption=RAW',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:[header]})});
+  }
+}
+async function ensureMMSheets(){
+  if(_mmSheetsEnsured)return;
+  await ensureSheetWithHeader(MM_GOAL_SHEET,MM_GOAL_HEADER);
+  await ensureSheetWithHeader(MM_MEMO_SHEET,MM_MEMO_HEADER);
+  _mmSheetsEnsured=true;
+}
+async function loadMMReportData(){
+  var id=getSheetId();if(!id){mmGoals=[];mmMemos=[];return;}
+  try{
+    var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+'/values:batchGet?ranges='+encodeURIComponent(MM_GOAL_SHEET+'!A2:F2000')+'&ranges='+encodeURIComponent(MM_MEMO_SHEET+'!A2:F2000'));
+    var r=data.valueRanges||[];
+    mmGoals=parseRows(r[0]&&r[0].values||[],MM_GOAL_FIELDS).filter(function(x){return x.id;});
+    mmMemos=parseRows(r[1]&&r[1].values||[],MM_MEMO_FIELDS).filter(function(x){return x.id;});
+    _mmSheetsEnsured=true;
+  }catch(e){mmGoals=[];mmMemos=[];}
+}
+async function saveMMGoal(month,assignee,targetUnits,targetSales){
+  await ensureMMSheets();
+  var idx=mmGoals.findIndex(function(g){return g.month===month&&g.assignee===assignee;});
+  var obj={id:(idx>=0?mmGoals[idx].id:generateId()),month:month,assignee:assignee,targetUnits:targetUnits,targetSales:targetSales,updatedAt:todayStr()};
+  if(idx>=0){mmGoals[idx]=obj;await updateRow(MM_GOAL_SHEET,idx,obj,MM_GOAL_FIELDS);}
+  else{mmGoals.push(obj);await appendRow(MM_GOAL_SHEET,obj,MM_GOAL_FIELDS);}
+}
+async function saveMMMemo(month,patch){
+  await ensureMMSheets();
+  var idx=mmMemos.findIndex(function(m){return m.month===month;});
+  var prev=idx>=0?mmMemos[idx]:{};
+  var obj={id:(idx>=0?prev.id:generateId()),month:month,
+    pickup:patch.pickup!==undefined?patch.pickup:(prev.pickup||''),
+    review:patch.review!==undefined?patch.review:(prev.review||''),
+    issues:patch.issues!==undefined?patch.issues:(prev.issues||''),
+    updatedAt:todayStr()};
+  if(idx>=0){mmMemos[idx]=obj;await updateRow(MM_MEMO_SHEET,idx,obj,MM_MEMO_FIELDS);}
+  else{mmMemos.push(obj);await appendRow(MM_MEMO_SHEET,obj,MM_MEMO_FIELDS);}
+}
+
 var AMOUNT_UNITS=['','月','年','式','日','台','個'];
 var LINE_ITEM_UNITS=['式','月','年','日','台','個','回','回/月','人','人月','時間','kg','本','枚','セット','件'];
 
@@ -2431,6 +2540,21 @@ function collectLineItems(){
   return items;
 }
 
+function buildStatusOptionsHtml(product,selectedKey){
+  var keys=statusKeysForProduct(product),html='';
+  keys.forEach(function(k){
+    var s=DEAL_STATUSES.find(function(x){return x.key===k;});if(!s)return;
+    var sel=(selectedKey===k)?' selected':((!selectedKey&&k==='lead')?' selected':'');
+    html+='<option value="'+s.key+'"'+sel+'>'+s.label+'</option>';
+  });
+  if(selectedKey&&keys.indexOf(selectedKey)===-1){var s2=DEAL_STATUSES.find(function(x){return x.key===selectedKey;});html+='<option value="'+selectedKey+'" selected>'+((s2&&s2.label)||selectedKey)+'</option>';}
+  return html;
+}
+function rebuildDealStatusOptions(){
+  var p=document.getElementById('f-product'),st=document.getElementById('f-status');
+  if(!p||!st)return;
+  st.innerHTML=buildStatusOptionsHtml(p.value,st.value);
+}
 function showDealForm(editId,preCustomerId){
   var d=editId?deals.find(function(x){return x.id===editId}):null;
   document.getElementById('modal-title').textContent=d?'案件を編集':'新規案件';
@@ -2439,13 +2563,14 @@ function showDealForm(editId,preCustomerId){
     var sel=(d&&d.customerId===c.id)||(preCustomerId===c.id)?'selected':'';
     custOptions+='<option value="'+c.id+'" '+sel+'>'+escapeHtml(c.company)+'</option>';
   });
-  var statusOptions='';
-  DEAL_STATUSES.forEach(function(s){
-    statusOptions+='<option value="'+s.key+'"'+((d&&d.status===s.key)?' selected':(!d&&s.key==='lead'?' selected':''))+'>'+s.label+'</option>';
-  });
+  var curProduct=d?(d.product||(isMMDeal(d)?'Mobile Mover':'')):'';
+  var prodOptions='';
+  PRODUCT_OPTIONS.forEach(function(p){prodOptions+='<option value="'+escapeAttr(p)+'"'+(curProduct===p?' selected':'')+'>'+(p||'（未設定）')+'</option>';});
+  var statusOptions=buildStatusOptionsHtml(curProduct,d?d.status:'lead');
   var h='<form onsubmit="saveDeal(event,\''+(editId||'')+'\');return false">';
   h+='<div class="form-group"><label>顧客 *</label><select class="form-input" id="f-custId" required>'+custOptions+'</select></div>';
   h+='<div class="form-group"><label>案件名 *</label><input class="form-input" id="f-dealname" required value="'+escapeAttr(d?d.name:'')+'"></div>';
+  h+='<div class="form-group"><label>商材 <span style="font-weight:400;color:#8aa89a;font-size:.85em">（MM案件は「Mobile Mover」を選択）</span></label><select class="form-input" id="f-product" onchange="rebuildDealStatusOptions()">'+prodOptions+'</select></div>';
   h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
   h+='<div class="form-group"><label>ステータス</label><select class="form-input" id="f-status">'+statusOptions+'</select></div>';
   h+='<div class="form-group"><label>金額</label><div style="display:flex;gap:6px"><input class="form-input" id="f-amount" type="number" value="'+(d?d.amount||'':'')+'" style="flex:1"><select class="form-input" id="f-amountUnit" style="width:auto;min-width:60px">';
@@ -2486,7 +2611,8 @@ async function saveDeal(e,editId){
     startDate:document.getElementById('f-startdate').value,
     deadline:document.getElementById('f-deadline').value,
     memo:document.getElementById('f-dealmemo').value.trim(),
-    updatedAt:todayStr()
+    updatedAt:todayStr(),
+    product:(document.getElementById('f-product')||{}).value||''
   };
   // Collect line items and auto-calc amount
   var li=collectLineItems().filter(function(x){return x.name;});
@@ -2850,6 +2976,133 @@ async function deleteActivity(id){
   if(idx<0)return;
   try{await deleteRow('活動',idx);activities.splice(idx,1);renderActivities();showToast('削除しました');}
   catch(e){showToast('削除に失敗しました');}
+}
+
+// ==================== MM月次レポート ====================
+var reportMonth='';
+var reportPersons=[];
+function ym(s){return (s||'').toString().slice(0,7);}
+function monthLabel(m){var p=(m||'').split('-');return p[0]+'年'+Number(p[1]||0)+'月';}
+function currentMonthStr(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+function recentMonths(n){var out=[],now=new Date();for(var i=0;i<n;i++){var dt=new Date(now.getFullYear(),now.getMonth()-i,1);out.push(dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0'));}return out;}
+
+async function renderReport(){
+  var el=document.getElementById('report-content');if(!el)return;
+  if(!reportMonth)reportMonth=currentMonthStr();
+  el.innerHTML='<div class="card" style="text-align:center;color:#8aa89a;padding:30px">読み込み中…</div>';
+  await loadMMReportData();
+  drawReport();
+}
+function setReportMonth(m){reportMonth=m;drawReport();}
+
+// 受注以降へ到達した月（フェーズ履歴優先、無ければ更新日）
+function dealWonMonth(d){
+  var hist=phaseHistory.filter(function(h){return h.dealId===d.id&&WON_STATUS_KEYS.indexOf(h.toStatus)!==-1;});
+  if(hist.length){hist.sort(function(a,b){return String(a.changedAt).localeCompare(String(b.changedAt));});return ym(hist[0].changedAt);}
+  if(WON_STATUS_KEYS.indexOf(d.status)!==-1)return ym(d.updatedAt);
+  return '';
+}
+
+function drawReport(){
+  var el=document.getElementById('report-content');if(!el)return;
+  var m=reportMonth;
+  var custById={};customers.forEach(function(c){custById[c.id]=c;});
+  var actByDeal={};activities.forEach(function(a){(actByDeal[a.dealId]=actByDeal[a.dealId]||[]).push(a);});
+  var dealById={};deals.forEach(function(d){dealById[d.id]=d;});
+  var mmDeals=deals.filter(isMMDeal);
+
+  function latestActIn(dealId,month){var acts=(actByDeal[dealId]||[]).filter(function(a){return ym(a.datetime)===month;});acts.sort(function(a,b){return String(b.datetime).localeCompare(String(a.datetime));});return acts[0]||null;}
+  function latestAct(dealId){var acts=(actByDeal[dealId]||[]).slice();acts.sort(function(a,b){return String(b.datetime).localeCompare(String(a.datetime));});return acts[0]||null;}
+  function repDate(d){var la=latestActIn(d.id,m);return (la&&la.datetime)||d.updatedAt||d.startDate||'';}
+  function dealInMonth(d){return ym(d.updatedAt)===m||ym(d.startDate)===m||dealWonMonth(d)===m||!!latestActIn(d.id,m);}
+  function rateCell(a,t){if(!t)return '<span class="rep-rate z">—</span>';var r=Math.round(a/t*100);return '<span class="rep-rate '+(r>=100?'k':(r>0?'m':'z'))+'">'+r+'%</span>';}
+
+  // 当月に受注以降へ到達したMM案件
+  var wonDeals=mmDeals.filter(function(d){return WON_STATUS_KEYS.indexOf(d.status)!==-1&&dealWonMonth(d)===m;});
+
+  // 担当一覧（浦・山﨑＋当月実績/目標がある人）
+  var persons=['浦','山﨑'];
+  wonDeals.forEach(function(d){var a=normalizeAssignee(d.assignee);if(a&&persons.indexOf(a)===-1)persons.push(a);});
+  mmGoals.filter(function(g){return g.month===m;}).forEach(function(g){if(g.assignee&&persons.indexOf(g.assignee)===-1)persons.push(g.assignee);});
+  reportPersons=persons;
+
+  var rows=[],totTU=0,totAU=0,totTS=0,totAS=0;
+  persons.forEach(function(p,i){
+    var g=mmGoals.find(function(x){return x.month===m&&x.assignee===p;})||{};
+    var tU=Number(g.targetUnits)||0,tS=Number(g.targetSales)||0;
+    var pWon=wonDeals.filter(function(d){return normalizeAssignee(d.assignee)===p;});
+    var aU=pWon.reduce(function(s,d){return s+(dealUnits(d)||1);},0);
+    var aS=Math.round(pWon.reduce(function(s,d){return s+(Number(d.amount)||0);},0)/10000);
+    totTU+=tU;totAU+=aU;totTS+=tS;totAS+=aS;
+    rows.push({p:p,i:i,tU:(g.targetUnits||''),tS:(g.targetSales||''),aU:aU,aS:aS});
+  });
+
+  var activeKeys=['lead','first','demo','proposal','negotiation','review'];
+  var pipeline=mmDeals.filter(function(d){return activeKeys.indexOf(d.status)!==-1;}).length;
+  var monthActs=activities.filter(function(a){return ym(a.datetime)===m&&dealById[a.dealId]&&isMMDeal(dealById[a.dealId]);}).length;
+  var months=recentMonths(6);if(months.indexOf(m)===-1)months.unshift(m);
+  var memo=mmMemos.find(function(x){return x.month===m;})||{};
+
+  var h='';
+  // ヘッダー
+  h+='<div class="rep-head"><span class="ttl">📊 Mobile Mover 販売・活動レポート</span><span class="rep-tag">🏷 商材：Mobile Mover</span><div class="rep-chips">';
+  months.forEach(function(mm){h+='<button class="rep-chip'+(mm===m?' active':'')+'" onclick="setReportMonth(\''+mm+'\')">'+mm.replace('-','/')+'</button>';});
+  h+='</div></div>';
+  h+='<div class="rep-note" style="margin:-6px 0 12px">'+monthLabel(m)+'｜実績・達成率は受注済みのMM案件から自動集計しています。</div>';
+
+  // 1. サマリー
+  h+='<div class="card"><h2>1. サマリー（目標 vs 実績）</h2>';
+  h+='<div class="rep-kpis">';
+  h+='<div class="rep-kpi"><div class="lab">受注台数</div><div class="big">'+totAU+'<small> / '+totTU+' 台</small></div><div class="bar"><i style="width:'+(totTU?Math.min(100,Math.round(totAU/totTU*100)):0)+'%"></i></div></div>';
+  h+='<div class="rep-kpi"><div class="lab">実績売上</div><div class="big">'+totAS.toLocaleString()+'<small> / '+totTS.toLocaleString()+' 万</small></div><div class="bar"><i style="width:'+(totTS?Math.min(100,Math.round(totAS/totTS*100)):0)+'%"></i></div></div>';
+  h+='<div class="rep-kpi"><div class="lab">商談中（パイプライン）</div><div class="big">'+pipeline+'<small> 件</small></div></div>';
+  h+='<div class="rep-kpi"><div class="lab">今月の活動</div><div class="big">'+monthActs+'<small> 件</small></div></div>';
+  h+='</div>';
+  h+='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>担当</th><th class="rep-num">目標台数</th><th class="rep-num">受注台数</th><th class="rep-num">達成率</th><th class="rep-num">目標売上(万)</th><th class="rep-num">実績売上(万)</th><th class="rep-num">達成率</th></tr></thead><tbody>';
+  rows.forEach(function(r){
+    h+='<tr><td>'+escapeHtml(r.p)+'</td>';
+    h+='<td class="rep-num"><input class="rep-goal" id="goal-u-'+r.i+'" type="number" min="0" value="'+escapeAttr(r.tU)+'" onchange="saveGoalRow('+r.i+')"></td>';
+    h+='<td class="rep-num">'+r.aU+'</td><td class="rep-num">'+rateCell(r.aU,Number(r.tU)||0)+'</td>';
+    h+='<td class="rep-num"><input class="rep-goal" id="goal-s-'+r.i+'" type="number" min="0" value="'+escapeAttr(r.tS)+'" onchange="saveGoalRow('+r.i+')"></td>';
+    h+='<td class="rep-num">'+r.aS.toLocaleString()+'</td><td class="rep-num">'+rateCell(r.aS,Number(r.tS)||0)+'</td></tr>';
+  });
+  h+='<tr class="rep-tot"><td>チーム合計</td><td class="rep-num">'+totTU+'</td><td class="rep-num">'+totAU+'</td><td class="rep-num">'+rateCell(totAU,totTU)+'</td><td class="rep-num">'+totTS.toLocaleString()+'</td><td class="rep-num">'+totAS.toLocaleString()+'</td><td class="rep-num">'+rateCell(totAS,totTS)+'</td></tr>';
+  h+='</tbody></table></div>';
+  h+='<div class="rep-note">※ 黄色セル（目標台数／目標売上）は各担当が月初に入力（変更すると自動保存）。受注台数＝受注案件の明細(単位:台)合計（明細が無い受注案件は1台として計上）。実績売上・達成率・合計は自動集計。</div></div>';
+
+  // 2. 案件一覧
+  var listDeals=mmDeals.filter(dealInMonth);
+  listDeals.sort(function(a,b){return String(repDate(a)).localeCompare(String(repDate(b)));});
+  h+='<div class="card"><h2>2. 案件一覧・活動（当月）</h2><div style="overflow-x:auto"><table class="data-table"><thead><tr><th>日付</th><th>顧客名</th><th>所在地</th><th>担当</th><th class="rep-num">台数</th><th>フェーズ</th><th>次アクション</th><th>備考</th></tr></thead><tbody>';
+  if(!listDeals.length)h+='<tr><td colspan="8" style="text-align:center;color:#8aa89a;padding:18px">当月の対象案件はありません</td></tr>';
+  listDeals.forEach(function(d){
+    var c=custById[d.customerId]||{};var la=latestAct(d.id);var na=la?la.content:'';var u=dealUnits(d);
+    h+='<tr onclick="showDealDetail(\''+escapeAttr(d.id)+'\')" style="cursor:pointer">';
+    h+='<td>'+escapeHtml(formatDate(repDate(d)))+'</td><td>'+escapeHtml(d.company)+'</td><td>'+escapeHtml(c.prefecture||'')+'</td><td>'+escapeHtml(normalizeAssignee(d.assignee))+'</td>';
+    h+='<td class="rep-num">'+(u||(WON_STATUS_KEYS.indexOf(d.status)!==-1?1:''))+'</td>';
+    h+='<td><span class="status-badge '+d.status+'">'+getStatusLabel(d.status)+'</span></td>';
+    h+='<td>'+escapeHtml(na.length>40?na.slice(0,40)+'…':na)+'</td><td>'+escapeHtml(d.memo||'')+'</td></tr>';
+  });
+  h+='</tbody></table></div></div>';
+
+  // 3-5. フリーテキスト
+  h+='<div class="card"><h2>3. ピックアップ項目</h2><textarea class="rep-edit" onchange="saveReportMemo(\'pickup\',this.value)" placeholder="販売戦略・トピックを箇条書き…">'+escapeHtml(memo.pickup||'')+'</textarea><div class="rep-note">変更すると自動保存されます。</div></div>';
+  h+='<div class="card"><h2>4. 振り返り</h2><textarea class="rep-edit" onchange="saveReportMemo(\'review\',this.value)" placeholder="今月の振り返り…">'+escapeHtml(memo.review||'')+'</textarea></div>';
+  h+='<div class="card"><h2>5. 懸案事項</h2><textarea class="rep-edit" onchange="saveReportMemo(\'issues\',this.value)" placeholder="継続課題・リスク・要検討事項…">'+escapeHtml(memo.issues||'')+'</textarea></div>';
+
+  el.innerHTML=h;
+}
+
+async function saveGoalRow(i){
+  var p=reportPersons[i];if(p===undefined)return;
+  var u=(document.getElementById('goal-u-'+i)||{}).value||'';
+  var s=(document.getElementById('goal-s-'+i)||{}).value||'';
+  try{await saveMMGoal(reportMonth,p,u,s);showToast('目標を保存しました');drawReport();}
+  catch(e){showToast('目標の保存に失敗しました');console.error(e);}
+}
+async function saveReportMemo(field,val){
+  try{var patch={};patch[field]=val;await saveMMMemo(reportMonth,patch);showToast('保存しました');}
+  catch(e){showToast('保存に失敗しました');console.error(e);}
 }
 
 // ==================== Dashboard ====================
