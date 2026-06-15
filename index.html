@@ -114,6 +114,8 @@ textarea.form-input{resize:vertical;min-height:80px}
 .rep-num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .rep-edit{width:100%;min-height:74px;padding:10px 12px;border:1px solid #b9d3c7;border-radius:10px;background:#f7fbf9;font-family:inherit;font-size:.9em;line-height:1.6;resize:vertical}
 .rep-note{font-size:.72em;color:#8aa89a;margin-top:6px}
+.rep-person{margin-bottom:12px}
+.rep-person-name{font-size:.85em;font-weight:700;color:#1a6b4a;margin-bottom:5px;padding-left:2px;border-left:3px solid #1a6b4a;padding-left:8px}
 @media(max-width:760px){.rep-kpis{grid-template-columns:repeat(2,1fr)}}
 
 /* Pipeline */
@@ -2373,12 +2375,15 @@ async function loadPhaseHistory(){
 
 // ==================== MM月次レポート: 目標・メモ シート ====================
 var MM_GOAL_SHEET='MM月次目標';
-var MM_GOAL_FIELDS=['id','month','assignee','targetUnits','targetSales','updatedAt'];
-var MM_GOAL_HEADER=['ID','月','担当','目標台数','目標売上(万円)','更新日'];
+var MM_GOAL_FIELDS=['id','month','assignee','targetUnits','targetSales','updatedAt','forecastUnits'];
+var MM_GOAL_HEADER=['ID','月','担当','目標台数','目標売上(万円)','更新日','見込台数'];
 var MM_MEMO_SHEET='MM月次メモ';
 var MM_MEMO_FIELDS=['id','month','pickup','review','issues','updatedAt'];
 var MM_MEMO_HEADER=['ID','月','ピックアップ','振り返り','懸案事項','更新日'];
-var mmGoals=[],mmMemos=[],_mmSheetsEnsured=false;
+var MM_PMEMO_SHEET='MM担当メモ';
+var MM_PMEMO_FIELDS=['id','month','assignee','plan','review','updatedAt'];
+var MM_PMEMO_HEADER=['ID','月','担当','活動計画','振り返り','更新日'];
+var mmGoals=[],mmMemos=[],mmPersonMemos=[],_mmSheetsEnsured=false;
 
 async function ensureSheetWithHeader(sheetName,header){
   var id=getSheetId();if(!id)return;
@@ -2393,22 +2398,24 @@ async function ensureMMSheets(){
   if(_mmSheetsEnsured)return;
   await ensureSheetWithHeader(MM_GOAL_SHEET,MM_GOAL_HEADER);
   await ensureSheetWithHeader(MM_MEMO_SHEET,MM_MEMO_HEADER);
+  await ensureSheetWithHeader(MM_PMEMO_SHEET,MM_PMEMO_HEADER);
   _mmSheetsEnsured=true;
 }
 async function loadMMReportData(){
-  var id=getSheetId();if(!id){mmGoals=[];mmMemos=[];return;}
+  var id=getSheetId();if(!id){mmGoals=[];mmMemos=[];mmPersonMemos=[];return;}
   try{
-    var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+'/values:batchGet?ranges='+encodeURIComponent(MM_GOAL_SHEET+'!A2:F2000')+'&ranges='+encodeURIComponent(MM_MEMO_SHEET+'!A2:F2000'));
+    var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+'/values:batchGet?ranges='+encodeURIComponent(MM_GOAL_SHEET+'!A2:G2000')+'&ranges='+encodeURIComponent(MM_MEMO_SHEET+'!A2:F2000')+'&ranges='+encodeURIComponent(MM_PMEMO_SHEET+'!A2:F2000'));
     var r=data.valueRanges||[];
     mmGoals=parseRows(r[0]&&r[0].values||[],MM_GOAL_FIELDS).filter(function(x){return x.id;});
     mmMemos=parseRows(r[1]&&r[1].values||[],MM_MEMO_FIELDS).filter(function(x){return x.id;});
+    mmPersonMemos=parseRows(r[2]&&r[2].values||[],MM_PMEMO_FIELDS).filter(function(x){return x.id;});
     _mmSheetsEnsured=true;
-  }catch(e){mmGoals=[];mmMemos=[];}
+  }catch(e){mmGoals=[];mmMemos=[];mmPersonMemos=[];}
 }
-async function saveMMGoal(month,assignee,targetUnits,targetSales){
+async function saveMMGoal(month,assignee,targetUnits,targetSales,forecastUnits){
   await ensureMMSheets();
   var idx=mmGoals.findIndex(function(g){return g.month===month&&g.assignee===assignee;});
-  var obj={id:(idx>=0?mmGoals[idx].id:generateId()),month:month,assignee:assignee,targetUnits:targetUnits,targetSales:targetSales,updatedAt:todayStr()};
+  var obj={id:(idx>=0?mmGoals[idx].id:generateId()),month:month,assignee:assignee,targetUnits:targetUnits,targetSales:targetSales,updatedAt:todayStr(),forecastUnits:forecastUnits};
   if(idx>=0){mmGoals[idx]=obj;await updateRow(MM_GOAL_SHEET,idx,obj,MM_GOAL_FIELDS);}
   else{mmGoals.push(obj);await appendRow(MM_GOAL_SHEET,obj,MM_GOAL_FIELDS);}
 }
@@ -2423,6 +2430,17 @@ async function saveMMMemo(month,patch){
     updatedAt:todayStr()};
   if(idx>=0){mmMemos[idx]=obj;await updateRow(MM_MEMO_SHEET,idx,obj,MM_MEMO_FIELDS);}
   else{mmMemos.push(obj);await appendRow(MM_MEMO_SHEET,obj,MM_MEMO_FIELDS);}
+}
+async function saveMMPersonMemo(month,assignee,patch){
+  await ensureMMSheets();
+  var idx=mmPersonMemos.findIndex(function(x){return x.month===month&&x.assignee===assignee;});
+  var prev=idx>=0?mmPersonMemos[idx]:{};
+  var obj={id:(idx>=0?prev.id:generateId()),month:month,assignee:assignee,
+    plan:patch.plan!==undefined?patch.plan:(prev.plan||''),
+    review:patch.review!==undefined?patch.review:(prev.review||''),
+    updatedAt:todayStr()};
+  if(idx>=0){mmPersonMemos[idx]=obj;await updateRow(MM_PMEMO_SHEET,idx,obj,MM_PMEMO_FIELDS);}
+  else{mmPersonMemos.push(obj);await appendRow(MM_PMEMO_SHEET,obj,MM_PMEMO_FIELDS);}
 }
 
 var AMOUNT_UNITS=['','月','年','式','日','台','個'];
@@ -3026,15 +3044,15 @@ function drawReport(){
   mmGoals.filter(function(g){return g.month===m;}).forEach(function(g){if(g.assignee&&persons.indexOf(g.assignee)===-1)persons.push(g.assignee);});
   reportPersons=persons;
 
-  var rows=[],totTU=0,totAU=0,totTS=0,totAS=0;
+  var rows=[],totTU=0,totFU=0,totAU=0,totTS=0,totAS=0;
   persons.forEach(function(p,i){
     var g=mmGoals.find(function(x){return x.month===m&&x.assignee===p;})||{};
-    var tU=Number(g.targetUnits)||0,tS=Number(g.targetSales)||0;
+    var tU=Number(g.targetUnits)||0,tS=Number(g.targetSales)||0,fU=Number(g.forecastUnits)||0;
     var pWon=wonDeals.filter(function(d){return normalizeAssignee(d.assignee)===p;});
     var aU=pWon.reduce(function(s,d){return s+(dealUnits(d)||1);},0);
     var aS=Math.round(pWon.reduce(function(s,d){return s+(Number(d.amount)||0);},0)/10000);
-    totTU+=tU;totAU+=aU;totTS+=tS;totAS+=aS;
-    rows.push({p:p,i:i,tU:(g.targetUnits||''),tS:(g.targetSales||''),aU:aU,aS:aS});
+    totTU+=tU;totFU+=fU;totAU+=aU;totTS+=tS;totAS+=aS;
+    rows.push({p:p,i:i,tU:(g.targetUnits||''),fU:(g.forecastUnits||''),tS:(g.targetSales||''),aU:aU,aS:aS});
   });
 
   var activeKeys=['lead','first','demo','proposal','negotiation','review'];
@@ -3058,17 +3076,18 @@ function drawReport(){
   h+='<div class="rep-kpi"><div class="lab">商談中（パイプライン）</div><div class="big">'+pipeline+'<small> 件</small></div></div>';
   h+='<div class="rep-kpi"><div class="lab">今月の活動</div><div class="big">'+monthActs+'<small> 件</small></div></div>';
   h+='</div>';
-  h+='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>担当</th><th class="rep-num">目標台数</th><th class="rep-num">受注台数</th><th class="rep-num">達成率</th><th class="rep-num">目標売上(万)</th><th class="rep-num">実績売上(万)</th><th class="rep-num">達成率</th></tr></thead><tbody>';
+  h+='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>担当</th><th class="rep-num">目標台数</th><th class="rep-num">見込台数</th><th class="rep-num">受注台数</th><th class="rep-num">達成率</th><th class="rep-num">目標売上(万)</th><th class="rep-num">実績売上(万)</th><th class="rep-num">達成率</th></tr></thead><tbody>';
   rows.forEach(function(r){
     h+='<tr><td>'+escapeHtml(r.p)+'</td>';
     h+='<td class="rep-num"><input class="rep-goal" id="goal-u-'+r.i+'" type="number" min="0" value="'+escapeAttr(r.tU)+'" onchange="saveGoalRow('+r.i+')"></td>';
+    h+='<td class="rep-num"><input class="rep-goal" id="goal-f-'+r.i+'" type="number" min="0" value="'+escapeAttr(r.fU)+'" onchange="saveGoalRow('+r.i+')"></td>';
     h+='<td class="rep-num">'+r.aU+'</td><td class="rep-num">'+rateCell(r.aU,Number(r.tU)||0)+'</td>';
     h+='<td class="rep-num"><input class="rep-goal" id="goal-s-'+r.i+'" type="number" min="0" value="'+escapeAttr(r.tS)+'" onchange="saveGoalRow('+r.i+')"></td>';
     h+='<td class="rep-num">'+r.aS.toLocaleString()+'</td><td class="rep-num">'+rateCell(r.aS,Number(r.tS)||0)+'</td></tr>';
   });
-  h+='<tr class="rep-tot"><td>チーム合計</td><td class="rep-num">'+totTU+'</td><td class="rep-num">'+totAU+'</td><td class="rep-num">'+rateCell(totAU,totTU)+'</td><td class="rep-num">'+totTS.toLocaleString()+'</td><td class="rep-num">'+totAS.toLocaleString()+'</td><td class="rep-num">'+rateCell(totAS,totTS)+'</td></tr>';
+  h+='<tr class="rep-tot"><td>チーム合計</td><td class="rep-num">'+totTU+'</td><td class="rep-num">'+totFU+'</td><td class="rep-num">'+totAU+'</td><td class="rep-num">'+rateCell(totAU,totTU)+'</td><td class="rep-num">'+totTS.toLocaleString()+'</td><td class="rep-num">'+totAS.toLocaleString()+'</td><td class="rep-num">'+rateCell(totAS,totTS)+'</td></tr>';
   h+='</tbody></table></div>';
-  h+='<div class="rep-note">※ 黄色セル（目標台数／目標売上）は各担当が月初に入力（変更すると自動保存）。受注台数＝受注案件の明細(単位:台)合計（明細が無い受注案件は1台として計上）。実績売上・達成率・合計は自動集計。</div></div>';
+  h+='<div class="rep-note">※ 黄色セル（目標台数／見込台数／目標売上）は各担当が月初に入力（変更すると自動保存）。受注台数＝受注案件の明細(単位:台)合計（明細が無い受注案件は1台として計上）。実績売上・達成率・合計は自動集計。</div></div>';
 
   // 2. 案件一覧
   var listDeals=mmDeals.filter(dealInMonth);
@@ -3085,10 +3104,19 @@ function drawReport(){
   });
   h+='</tbody></table></div></div>';
 
-  // 3-5. フリーテキスト
-  h+='<div class="card"><h2>3. ピックアップ項目</h2><textarea class="rep-edit" onchange="saveReportMemo(\'pickup\',this.value)" placeholder="販売戦略・トピックを箇条書き…">'+escapeHtml(memo.pickup||'')+'</textarea><div class="rep-note">変更すると自動保存されます。</div></div>';
-  h+='<div class="card"><h2>4. 振り返り</h2><textarea class="rep-edit" onchange="saveReportMemo(\'review\',this.value)" placeholder="今月の振り返り…">'+escapeHtml(memo.review||'')+'</textarea></div>';
-  h+='<div class="card"><h2>5. 懸案事項</h2><textarea class="rep-edit" onchange="saveReportMemo(\'issues\',this.value)" placeholder="継続課題・リスク・要検討事項…">'+escapeHtml(memo.issues||'')+'</textarea></div>';
+  function personMemo(p){return mmPersonMemos.find(function(x){return x.month===m&&x.assignee===p;})||{};}
+  // 3. 活動計画（担当別）
+  h+='<div class="card"><h2>3. 活動計画（担当別）</h2>';
+  persons.forEach(function(p,i){var pm=personMemo(p);h+='<div class="rep-person"><div class="rep-person-name">'+escapeHtml(p)+'</div><textarea class="rep-edit" onchange="saveReportPersonMemo('+i+',\'plan\',this.value)" placeholder="'+escapeAttr(p)+'さんの当月の活動計画…">'+escapeHtml(pm.plan||'')+'</textarea></div>';});
+  h+='<div class="rep-note">担当ごとに記入。変更すると自動保存されます。</div></div>';
+  // 4. 振り返り（担当別）
+  h+='<div class="card"><h2>4. 振り返り（担当別）</h2>';
+  persons.forEach(function(p,i){var pm=personMemo(p);h+='<div class="rep-person"><div class="rep-person-name">'+escapeHtml(p)+'</div><textarea class="rep-edit" onchange="saveReportPersonMemo('+i+',\'review\',this.value)" placeholder="'+escapeAttr(p)+'さんの当月の振り返り…">'+escapeHtml(pm.review||'')+'</textarea></div>';});
+  h+='</div>';
+  // 5. ピックアップ項目（チーム共通）
+  h+='<div class="card"><h2>5. ピックアップ項目</h2><textarea class="rep-edit" onchange="saveReportMemo(\'pickup\',this.value)" placeholder="販売戦略・トピックを箇条書き…">'+escapeHtml(memo.pickup||'')+'</textarea><div class="rep-note">チーム共通。変更で自動保存。</div></div>';
+  // 6. 懸案事項（チーム共通）
+  h+='<div class="card"><h2>6. 懸案事項</h2><textarea class="rep-edit" onchange="saveReportMemo(\'issues\',this.value)" placeholder="継続課題・リスク・要検討事項…">'+escapeHtml(memo.issues||'')+'</textarea></div>';
 
   el.innerHTML=h;
 }
@@ -3097,11 +3125,17 @@ async function saveGoalRow(i){
   var p=reportPersons[i];if(p===undefined)return;
   var u=(document.getElementById('goal-u-'+i)||{}).value||'';
   var s=(document.getElementById('goal-s-'+i)||{}).value||'';
-  try{await saveMMGoal(reportMonth,p,u,s);showToast('目標を保存しました');drawReport();}
+  var f=(document.getElementById('goal-f-'+i)||{}).value||'';
+  try{await saveMMGoal(reportMonth,p,u,s,f);showToast('目標を保存しました');drawReport();}
   catch(e){showToast('目標の保存に失敗しました');console.error(e);}
 }
 async function saveReportMemo(field,val){
   try{var patch={};patch[field]=val;await saveMMMemo(reportMonth,patch);showToast('保存しました');}
+  catch(e){showToast('保存に失敗しました');console.error(e);}
+}
+async function saveReportPersonMemo(i,field,val){
+  var p=reportPersons[i];if(p===undefined)return;
+  try{var patch={};patch[field]=val;await saveMMPersonMemo(reportMonth,p,patch);showToast('保存しました');}
   catch(e){showToast('保存に失敗しました');console.error(e);}
 }
 
