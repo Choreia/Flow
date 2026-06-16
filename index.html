@@ -3002,7 +3002,7 @@ var reportPersons=[];
 function ym(s){return (s||'').toString().slice(0,7);}
 function monthLabel(m){var p=(m||'').split('-');return p[0]+'年'+Number(p[1]||0)+'月';}
 function currentMonthStr(){var d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
-function recentMonths(n){var out=[],now=new Date();for(var i=0;i<n;i++){var dt=new Date(now.getFullYear(),now.getMonth()-i,1);out.push(dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0'));}return out;}
+function monthsWindow(future,back){var out=[],now=new Date();for(var i=future;i>=-back;i--){var dt=new Date(now.getFullYear(),now.getMonth()+i,1);out.push(dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0'));}return out;}
 
 async function renderReport(){
   var el=document.getElementById('report-content');if(!el)return;
@@ -3058,7 +3058,8 @@ function drawReport(){
   var activeKeys=['lead','first','demo','proposal','negotiation','review'];
   var pipeline=mmDeals.filter(function(d){return activeKeys.indexOf(d.status)!==-1;}).length;
   var monthActs=activities.filter(function(a){return ym(a.datetime)===m&&dealById[a.dealId]&&isMMDeal(dealById[a.dealId]);}).length;
-  var months=recentMonths(6);if(months.indexOf(m)===-1)months.unshift(m);
+  var months=monthsWindow(2,5);if(months.indexOf(m)===-1)months.unshift(m);
+  var isFutureMonth=m>currentMonthStr();
   var memo=mmMemos.find(function(x){return x.month===m;})||{};
 
   var h='';
@@ -3066,7 +3067,7 @@ function drawReport(){
   h+='<div class="rep-head"><span class="ttl">📊 Mobile Mover 販売・活動レポート</span><span class="rep-tag">🏷 商材：Mobile Mover</span><div class="rep-chips">';
   months.forEach(function(mm){h+='<button class="rep-chip'+(mm===m?' active':'')+'" onclick="setReportMonth(\''+mm+'\')">'+mm.replace('-','/')+'</button>';});
   h+='</div></div>';
-  h+='<div class="rep-note" style="margin:-6px 0 12px">'+monthLabel(m)+'｜実績・達成率は受注済みのMM案件から自動集計しています。</div>';
+  h+='<div class="rep-note" style="margin:-6px 0 12px">'+monthLabel(m)+(isFutureMonth?'（翌月以降の先行入力用：活動計画・目標・見込台数を入力できます。実績は確定後に自動反映）':'｜実績・達成率は受注済みのMM案件から自動集計しています。')+'</div>';
 
   // 1. サマリー
   h+='<div class="card"><h2>1. サマリー（目標 vs 実績）</h2>';
