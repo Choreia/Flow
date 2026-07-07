@@ -117,6 +117,19 @@ textarea.form-input{resize:vertical;min-height:80px}
 .rep-person{margin-bottom:12px}
 .rep-person-name{font-size:.85em;font-weight:700;color:#1a6b4a;margin-bottom:5px;padding-left:2px;border-left:3px solid #1a6b4a;padding-left:8px}
 @media(max-width:760px){.rep-kpis{grid-template-columns:repeat(2,1fr)}}
+/* 活動量レポート */
+.av-cell{text-align:center;white-space:nowrap;vertical-align:middle}
+.av-actual{font-weight:800;font-size:1.05em;color:#0d4a30;line-height:1.1}
+.av-actual.z{color:#b0bcb4}.av-actual.m{color:#b45309}.av-actual.k{color:#059669}
+.av-sub{font-size:.68em;color:#8aa89a;margin-top:2px}
+.av-tinput{width:52px;padding:2px 5px;border:1px solid #d8b94a;border-radius:6px;background:#fffdf0;color:#7a5a10;font-weight:700;text-align:center;font-family:inherit;font-size:.82em;margin-top:3px}
+.av-typecol{text-align:left;font-weight:700;color:#1a3a2a;white-space:nowrap}
+.av-deptcol{background:#eef6f1}
+.av-barrow{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.av-barrow .lab{width:88px;font-size:.82em;font-weight:700;color:#1a3a2a;flex-shrink:0}
+.av-bar{flex:1;height:12px;border-radius:6px;background:#e3eee8;overflow:hidden;min-width:60px}
+.av-bar>i{display:block;height:100%;background:linear-gradient(90deg,#1a6b4a,#37a06e)}
+.av-barrow .val{width:110px;text-align:right;font-size:.8em;color:#5a7a6a;flex-shrink:0;font-variant-numeric:tabular-nums}
 
 /* Pipeline */
 .pipeline{display:flex;gap:12px;overflow-x:auto;padding-bottom:12px;min-height:200px}
@@ -389,6 +402,7 @@ textarea.form-input{resize:vertical;min-height:80px}
       <button class="tab" id="tab-customers" onclick="switchTab('customers')">顧客</button>
       <button class="tab" id="tab-deals" onclick="switchTab('deals')">案件</button>
       <button class="tab" id="tab-activities" onclick="switchTab('activities')">活動</button>
+      <button class="tab" id="tab-actvol" onclick="switchTab('actvol')">活動量</button>
       <button class="tab" id="tab-report" onclick="switchTab('report')">MMレポート</button>
       <button class="tab" id="tab-cards" onclick="switchTab('cards')">名刺</button>
       <button class="tab" id="tab-hr" onclick="switchTab('hr')" style="display:none">人事</button>
@@ -478,6 +492,11 @@ textarea.form-input{resize:vertical;min-height:80px}
         <div class="title">活動記録がありません</div>
         <div class="desc">「+ 記録」ボタンから活動を記録しましょう</div>
       </div>
+    </div>
+
+    <!-- 活動量レポート panel -->
+    <div id="panel-actvol" style="display:none">
+      <div id="actvol-content"></div>
     </div>
 
     <!-- MM月次レポート panel -->
@@ -778,7 +797,7 @@ function showView(name){
 }
 function switchTab(tab){
   currentTab=tab;
-  ['dashboard','customers','deals','activities','report','cards','hr'].forEach(function(t){
+  ['dashboard','customers','deals','activities','actvol','report','cards','hr'].forEach(function(t){
     var tabEl=document.getElementById('tab-'+t);
     var panelEl=document.getElementById('panel-'+t);
     if(tabEl)tabEl.classList.toggle('active',tab===t);
@@ -788,6 +807,7 @@ function switchTab(tab){
   if(tab==='customers')renderCustomers();
   if(tab==='deals')renderDeals();
   if(tab==='activities')renderActivities();
+  if(tab==='actvol')renderActVol();
   if(tab==='report')renderReport();
   if(tab==='hr')renderHrEvaluations();
   if(tab==='cards')loadSavedCards();
@@ -3138,6 +3158,140 @@ async function saveReportPersonMemo(i,field,val){
   var p=reportPersons[i];if(p===undefined)return;
   try{var patch={};patch[field]=val;await saveMMPersonMemo(reportMonth,p,patch);showToast('保存しました');}
   catch(e){showToast('保存に失敗しました');console.error(e);}
+}
+
+// ==================== 活動量レポート（活動種別×担当 実績/目標） ====================
+var ACTVOL_TARGET_SHEET='活動量目標';
+var ACTVOL_FIELDS=['id','month','assignee','visit','call','email','meeting','other','updatedAt'];
+var ACTVOL_HEADER=['ID','月','担当','訪問','電話','メール','打合せ','その他','更新日'];
+var actVolTargets=[],_actVolEnsured=false,actVolMonth='',avPersons=[];
+var AV_TYPE_COLORS={visit:'#2563eb',call:'#d97706',email:'#7c3aed',meeting:'#059669',other:'#8a9a8a'};
+
+async function ensureActVolSheet(){
+  if(_actVolEnsured)return;
+  await ensureSheetWithHeader(ACTVOL_TARGET_SHEET,ACTVOL_HEADER);
+  _actVolEnsured=true;
+}
+async function loadActVolData(){
+  var id=getSheetId();if(!id){actVolTargets=[];return;}
+  try{
+    var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+'/values/'+encodeURIComponent(ACTVOL_TARGET_SHEET+'!A2:I2000'));
+    actVolTargets=parseRows(data.values||[],ACTVOL_FIELDS).filter(function(x){return x.id;});
+    _actVolEnsured=true;
+  }catch(e){actVolTargets=[];} // シート未作成（初回保存時に自動生成）
+}
+async function saveActVolTarget(month,assignee,vals){
+  await ensureActVolSheet();
+  var idx=actVolTargets.findIndex(function(t){return t.month===month&&t.assignee===assignee;});
+  var prev=idx>=0?actVolTargets[idx]:{};
+  var obj={id:(idx>=0?prev.id:generateId()),month:month,assignee:assignee,
+    visit:vals.visit,call:vals.call,email:vals.email,meeting:vals.meeting,other:vals.other,updatedAt:todayStr()};
+  if(idx>=0){actVolTargets[idx]=obj;await updateRow(ACTVOL_TARGET_SHEET,idx,obj,ACTVOL_FIELDS);}
+  else{actVolTargets.push(obj);await appendRow(ACTVOL_TARGET_SHEET,obj,ACTVOL_FIELDS);}
+}
+async function saveActVolRow(i){
+  var p=avPersons[i];if(!p)return;
+  var vals={};
+  ACTIVITY_TYPES.forEach(function(t){var el=document.getElementById('avt_'+i+'_'+t.key);vals[t.key]=el?(el.value||''):'';});
+  try{await saveActVolTarget(actVolMonth,p,vals);showToast('目標を保存しました');drawActVol();}
+  catch(e){showToast('目標の保存に失敗しました');console.error(e);}
+}
+
+async function renderActVol(){
+  var el=document.getElementById('actvol-content');if(!el)return;
+  if(!actVolMonth)actVolMonth=currentMonthStr();
+  el.innerHTML='<div class="card" style="text-align:center;color:#8aa89a;padding:30px">読み込み中…</div>';
+  await loadActVolData();
+  drawActVol();
+}
+function setActVolMonth(m){actVolMonth=m;drawActVol();}
+
+function drawActVol(){
+  var el=document.getElementById('actvol-content');if(!el)return;
+  var m=actVolMonth;
+
+  // 当月の活動を担当×種別で集計
+  var actual={};
+  activities.filter(function(a){return ym(a.datetime)===m;}).forEach(function(a){
+    var p=normalizeAssignee(a.assignee)||'(不明)';
+    var k=a.type||'other';if(!ACTIVITY_TYPES.some(function(t){return t.key===k;}))k='other';
+    if(!actual[p])actual[p]={};
+    actual[p][k]=(actual[p][k]||0)+1;
+  });
+
+  // 担当ロスター：営業チーム(浦/山﨑) ∪ 全活動の担当 ∪ 当月目標保有者 ∪ 当月活動者
+  var persons=['浦','山﨑'];
+  activities.forEach(function(a){var p=normalizeAssignee(a.assignee);if(p&&persons.indexOf(p)===-1)persons.push(p);});
+  actVolTargets.filter(function(t){return t.month===m;}).forEach(function(t){if(t.assignee&&persons.indexOf(t.assignee)===-1)persons.push(t.assignee);});
+  Object.keys(actual).forEach(function(p){if(persons.indexOf(p)===-1)persons.push(p);});
+  function ptot(p){var o=actual[p]||{},s=0;for(var k in o)s+=o[k];return s;}
+  persons.sort(function(a,b){if(a==='(不明)')return 1;if(b==='(不明)')return -1;return ptot(b)-ptot(a)||a.localeCompare(b,'ja');});
+  avPersons=persons;
+
+  function tget(p){return actVolTargets.find(function(t){return t.month===m&&t.assignee===p;})||{};}
+  function tnum(p,k){return Number(tget(p)[k])||0;}
+  function aNum(p,k){return (actual[p]&&actual[p][k])||0;}
+  function avCls(a,t){if(!t)return a>0?'':'z';return a>=t?'k':(a>0?'m':'z');}
+  function rate(a,t){if(!t)return '<span class="rep-rate z">—</span>';var r=Math.round(a/t*100);return '<span class="rep-rate '+(r>=100?'k':(r>0?'m':'z'))+'">'+r+'%</span>';}
+
+  // 種別ごとの営業部計（実績/目標）と全体合計
+  var deptA={},deptT={},gA=0,gT=0;
+  ACTIVITY_TYPES.forEach(function(t){
+    var a=0,tg=0;persons.forEach(function(p){a+=aNum(p,t.key);tg+=tnum(p,t.key);});
+    deptA[t.key]=a;deptT[t.key]=tg;gA+=a;gT+=tg;
+  });
+  function personA(p){var s=0;ACTIVITY_TYPES.forEach(function(t){s+=aNum(p,t.key);});return s;}
+  function personT(p){var s=0;ACTIVITY_TYPES.forEach(function(t){s+=tnum(p,t.key);});return s;}
+
+  var months=monthsWindow(1,5);if(months.indexOf(m)===-1)months.unshift(m);
+  var isFuture=m>currentMonthStr();
+
+  var h='';
+  h+='<div class="rep-head"><span class="ttl">📊 営業活動量レポート</span><div class="rep-chips">';
+  months.forEach(function(mm){h+='<button class="rep-chip'+(mm===m?' active':'')+'" onclick="setActVolMonth(\''+mm+'\')">'+mm.replace('-','/')+'</button>';});
+  h+='</div></div>';
+  h+='<div class="rep-note" style="margin:-6px 0 12px">'+monthLabel(m)+'｜活動種別ごとの件数（実績）と目標を、営業部計・担当別で集計しています。'+(isFuture?'（翌月の先行入力用：目標を入力できます。実績は活動記録から自動集計）':'実績は「活動」の記録から自動集計されます。')+'</div>';
+
+  // KPI
+  h+='<div class="card"><h2>1. サマリー（営業部計）</h2><div class="rep-kpis">';
+  h+='<div class="rep-kpi"><div class="lab">活動合計</div><div class="big">'+gA+'<small> / '+gT+' 件</small></div><div class="bar"><i style="width:'+(gT?Math.min(100,Math.round(gA/gT*100)):0)+'%"></i></div></div>';
+  h+='<div class="rep-kpi"><div class="lab">🚶 訪問</div><div class="big">'+deptA.visit+'<small> / '+deptT.visit+' 件</small></div><div class="bar"><i style="width:'+(deptT.visit?Math.min(100,Math.round(deptA.visit/deptT.visit*100)):0)+'%"></i></div></div>';
+  h+='<div class="rep-kpi"><div class="lab">📞 電話</div><div class="big">'+deptA.call+'<small> / '+deptT.call+' 件</small></div><div class="bar"><i style="width:'+(deptT.call?Math.min(100,Math.round(deptA.call/deptT.call*100)):0)+'%"></i></div></div>';
+  h+='<div class="rep-kpi"><div class="lab">達成率（全体）</div><div class="big">'+(gT?Math.round(gA/gT*100):'—')+'<small> %</small></div></div>';
+  h+='</div></div>';
+
+  // マトリクス：活動種別 × 担当（実績 / 目標）
+  h+='<div class="card"><h2>2. 活動種別 × 担当（実績／目標）</h2><div style="overflow-x:auto"><table class="data-table"><thead><tr><th>活動種別</th>';
+  persons.forEach(function(p){h+='<th class="rep-num">'+escapeHtml(p)+'</th>';});
+  h+='<th class="rep-num av-deptcol">営業部計</th></tr></thead><tbody>';
+  ACTIVITY_TYPES.forEach(function(t){
+    h+='<tr><td class="av-typecol">'+t.icon+' '+t.label+'</td>';
+    persons.forEach(function(p,i){
+      var a=aNum(p,t.key),tv=tnum(p,t.key);
+      h+='<td class="av-cell"><div class="av-actual '+avCls(a,tv)+'">'+a+'</div>';
+      if(p==='(不明)')h+='<div class="av-sub">—</div>';
+      else h+='<input class="av-tinput" id="avt_'+i+'_'+t.key+'" type="number" min="0" value="'+escapeAttr(tget(p)[t.key]||'')+'" onchange="saveActVolRow('+i+')" title="'+escapeAttr(p+'さんの'+t.label+'目標')+'">';
+      h+='</td>';
+    });
+    h+='<td class="av-cell av-deptcol"><div class="av-actual '+avCls(deptA[t.key],deptT[t.key])+'">'+deptA[t.key]+'</div><div class="av-sub">目標 '+deptT[t.key]+'</div>'+rate(deptA[t.key],deptT[t.key])+'</td>';
+    h+='</tr>';
+  });
+  // 合計行
+  h+='<tr class="rep-tot"><td>合計</td>';
+  persons.forEach(function(p){var a=personA(p),tv=personT(p);h+='<td class="av-cell"><div class="av-actual">'+a+'</div><div class="av-sub">目標 '+tv+'</div>'+rate(a,tv)+'</td>';});
+  h+='<td class="av-cell av-deptcol"><div class="av-actual">'+gA+'</div><div class="av-sub">目標 '+gT+'</div>'+rate(gA,gT)+'</td></tr>';
+  h+='</tbody></table></div>';
+  h+='<div class="rep-note">※ 黄色セル＝各担当の月次目標（入力すると自動保存）。数字（実績）は「活動」の記録から自動集計。<span style="color:#059669;font-weight:700">緑=目標達成</span>／<span style="color:#b45309;font-weight:700">橙=未達</span>／灰=実績0。営業部計の目標は担当別目標の合計です。</div></div>';
+
+  // 種別別 達成率バー（営業部計）
+  h+='<div class="card"><h2>3. 活動種別別 達成率（営業部計）</h2>';
+  ACTIVITY_TYPES.forEach(function(t){
+    var a=deptA[t.key],tv=deptT[t.key];var pct=tv?Math.min(100,Math.round(a/tv*100)):0;
+    h+='<div class="av-barrow"><span class="lab">'+t.icon+' '+t.label+'</span><span class="av-bar"><i style="width:'+pct+'%;background:'+AV_TYPE_COLORS[t.key]+'"></i></span><span class="val">'+a+' / '+(tv||'—')+' 件 '+(tv?'('+Math.round(a/tv*100)+'%)':'')+'</span></div>';
+  });
+  h+='<div class="rep-note">目標未設定の種別はバーが表示されません（上の表で目標を入力してください）。</div></div>';
+
+  el.innerHTML=h;
 }
 
 // ==================== Dashboard ====================
