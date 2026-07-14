@@ -943,7 +943,7 @@ async function confirmSetup(){
     var headers=[
       {range:'顧客!A1:J1',values:[['ID','会社名','担当者','部署','役職','TEL','メール','住所','メモ','登録日']]},
       {range:'案件!A1:N1',values:[['ID','顧客ID','会社名','案件名','ステータス','金額','単位','担当者','開始日','期限','メモ','更新日','明細','商材']]},
-      {range:'活動!A1:H1',values:[['ID','顧客ID','会社名','案件ID','種別','内容','担当者','日時']]}
+      {range:'活動!A1:J1',values:[['ID','顧客ID','会社名','案件ID','種別','内容','担当者','日時','写真','チラシ配布']]}
     ];
     await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+ssId+'/values:batchUpdate',{
       method:'POST',headers:{'Content-Type':'application/json'},
@@ -1590,7 +1590,7 @@ async function loadAllData(){
     if(useExternalCustomers){
       // Fetch customer DB and Flow spreadsheet in parallel
       var pCust=apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+custSsId+'/values:batchGet?ranges='+encodeURIComponent('List!A2:Z500')+'&ranges='+encodeURIComponent('Master!A2:D200'));
-      var pFlow=apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values:batchGet?ranges='+encodeURIComponent('案件!A2:N1000')+'&ranges='+encodeURIComponent('活動!A2:H1000'));
+      var pFlow=apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values:batchGet?ranges='+encodeURIComponent('案件!A2:N1000')+'&ranges='+encodeURIComponent('活動!A2:J1000'));
       var dataA=await pCust;
       var rangesA=dataA.valueRanges||[];
       customers=parseRows(rangesA[0]&&rangesA[0].values||[],CUSTOMER_FIELDS);
@@ -1610,10 +1610,10 @@ async function loadAllData(){
       var dataB=await pFlow;
       var rangesB=dataB.valueRanges||[];
       deals=parseRows(rangesB[0]&&rangesB[0].values||[],DEAL_FIELDS);
-      activities=parseRows(rangesB[1]&&rangesB[1].values||[],['id','customerId','company','dealId','type','content','assignee','datetime']);
+      activities=parseRows(rangesB[1]&&rangesB[1].values||[],['id','customerId','company','dealId','type','content','assignee','datetime','photoUrl','flyerDistributed']);
     }else{
       // Legacy: everything in single Flow spreadsheet
-      var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values:batchGet?ranges='+encodeURIComponent('顧客!A2:J1000')+'&ranges='+encodeURIComponent('案件!A2:N1000')+'&ranges='+encodeURIComponent('活動!A2:H1000'));
+      var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID+'/values:batchGet?ranges='+encodeURIComponent('顧客!A2:J1000')+'&ranges='+encodeURIComponent('案件!A2:N1000')+'&ranges='+encodeURIComponent('活動!A2:J1000'));
       var ranges=data.valueRanges||[];
       // Legacy schema: map old fields into new field names where possible
       var legacy=parseRows(ranges[0]&&ranges[0].values||[],['id','company','contact','department','contactTitle','tel','email','address','memo','createdAt']);
@@ -1622,7 +1622,7 @@ async function loadAllData(){
         return n;
       });
       deals=parseRows(ranges[1]&&ranges[1].values||[],DEAL_FIELDS);
-      activities=parseRows(ranges[2]&&ranges[2].values||[],['id','customerId','company','dealId','type','content','assignee','datetime']);
+      activities=parseRows(ranges[2]&&ranges[2].values||[],['id','customerId','company','dealId','type','content','assignee','datetime','photoUrl','flyerDistributed']);
       customerMaster={services:[],categories:[],members:[]};
     }
     deals.forEach(function(d){d.amount=d.amount?Number(d.amount):0;});
@@ -2839,7 +2839,7 @@ async function deleteDealDocument(dealId,actId,ssId){
 }
 
 // ==================== Activities ====================
-var ACTIVITY_FIELDS=['id','customerId','company','dealId','type','content','assignee','datetime','photoUrl'];
+var ACTIVITY_FIELDS=['id','customerId','company','dealId','type','content','assignee','datetime','photoUrl','flyerDistributed'];
 
 function renderActivities(){
   var filter=document.getElementById('activity-filter').value;
@@ -2868,7 +2868,7 @@ function renderActivities(){
     h+='<div class="activity-icon">'+at.icon+'</div>';
     h+='<div class="activity-body">';
     h+='<div class="activity-title">'+escapeHtml(a.content.substring(0,100))+'</div>';
-    h+='<div class="activity-meta">'+escapeHtml(a.company)+(a.assignee?' | '+escapeHtml(a.assignee):'')+(a.datetime?' | '+formatDate(a.datetime):'')+(a.photoUrl?' | &#128247;':'')+'</div>';
+    h+='<div class="activity-meta">'+escapeHtml(a.company)+(a.assignee?' | '+escapeHtml(a.assignee):'')+(a.datetime?' | '+formatDate(a.datetime):'')+(a.photoUrl?' | &#128247;':'')+(String(a.flyerDistributed)==='1'?' | <span style="color:#b8860b;font-weight:600">&#129386;配布</span>':'')+'</div>';
     h+='</div>';
     h+='</div>';
   });
@@ -2891,6 +2891,7 @@ function showActivityDetail(id){
   if(a.company)h+='<span style="color:#5a7a6a">顧客</span><span style="font-weight:600;cursor:pointer" onclick="closeDetail();showCustomerDetail(\''+escapeAttr(a.customerId)+'\')">'+escapeHtml(a.company)+'</span>';
   if(deal)h+='<span style="color:#5a7a6a">案件</span><span style="cursor:pointer" onclick="closeDetail();showDealDetail(\''+escapeAttr(deal.id)+'\')">'+escapeHtml(deal.name)+'</span>';
   if(a.assignee)h+='<span style="color:#5a7a6a">担当</span><span>'+escapeHtml(a.assignee)+'</span>';
+  if(String(a.flyerDistributed)==='1')h+='<span style="color:#5a7a6a">チラシ</span><span style="color:#b8860b;font-weight:600">&#129386; 配布済み</span>';
   h+='</div>';
   h+='<div style="background:#f5f9f7;border-radius:10px;padding:14px;font-size:.9em;white-space:pre-wrap;line-height:1.7">'+escapeHtml(a.content)+'</div>';
   if(a.photoUrl){
@@ -2930,6 +2931,10 @@ function showActivityForm(preCustomerId,preDealId,editId){
   h+='<div class="form-group"><label>日時</label><input class="form-input" id="f-actdate" type="date" value="'+escapeAttr(existing?existing.datetime:todayStr())+'"></div></div>';
   h+='<div class="form-group"><label>内容 *</label><textarea class="form-input" id="f-actcontent" required placeholder="活動内容を入力...">'+escapeHtml(existing?existing.content:'')+'</textarea></div>';
   h+='<div class="form-group"><label>担当者</label><input class="form-input" id="f-actassignee" value="'+escapeAttr(existing?existing.assignee:currentUser.name)+'"></div>';
+  // チラシ配布（配布先＝上で選んだ顧客）
+  h+='<div class="form-group" style="background:#fff8e6;border:1px solid #f0d98a;border-radius:10px;padding:10px 12px;margin-bottom:12px">';
+  h+='<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;font-weight:600"><input type="checkbox" id="f-actflyer" style="width:auto;margin:0"'+(existing&&String(existing.flyerDistributed)==='1'?' checked':'')+'>&#129386; このお客様にチラシを配布した</label>';
+  h+='<div style="font-size:.78em;color:#8a7a3a;margin-top:4px">配布先は上で選んだ顧客として記録され、活動量レポートの「チラシ配布」に集計されます。</div></div>';
   // Photo
   h+='<div class="form-group"><label>写真</label>';
   h+='<input type="file" id="f-actphoto" accept="image/*" style="font-size:.85em">';
@@ -2948,6 +2953,8 @@ async function saveActivity(e,editId){
   var cust=customers.find(function(x){return x.id===custId})||{};
   var dealId=document.getElementById('f-actdeal').value;
   var existing=editId?activities.find(function(x){return x.id===editId}):null;
+  var flyerChecked=!!(document.getElementById('f-actflyer')&&document.getElementById('f-actflyer').checked);
+  if(flyerChecked&&!custId){showToast('チラシ配布は配布先の顧客を選択してください');return;}
   var obj={
     id:editId||generateId(),
     customerId:custId,
@@ -2957,7 +2964,8 @@ async function saveActivity(e,editId){
     content:document.getElementById('f-actcontent').value.trim(),
     assignee:document.getElementById('f-actassignee').value.trim(),
     datetime:document.getElementById('f-actdate').value,
-    photoUrl:(existing&&existing.photoUrl)||''
+    photoUrl:(existing&&existing.photoUrl)||'',
+    flyerDistributed:flyerChecked?'1':''
   };
 
   // Check manually entered photo URL first
@@ -3162,8 +3170,8 @@ async function saveReportPersonMemo(i,field,val){
 
 // ==================== 活動量レポート（活動種別×担当 実績/目標） ====================
 var ACTVOL_TARGET_SHEET='活動量目標';
-var ACTVOL_FIELDS=['id','month','assignee','visit','call','email','meeting','other','updatedAt'];
-var ACTVOL_HEADER=['ID','月','担当','訪問','電話','メール','打合せ','その他','更新日'];
+var ACTVOL_FIELDS=['id','month','assignee','visit','call','email','meeting','other','updatedAt','flyer'];
+var ACTVOL_HEADER=['ID','月','担当','訪問','電話','メール','打合せ','その他','更新日','チラシ配布'];
 var actVolTargets=[],_actVolEnsured=false,actVolMonth='',avPersons=[];
 var AV_TYPE_COLORS={visit:'#2563eb',call:'#d97706',email:'#7c3aed',meeting:'#059669',other:'#8a9a8a'};
 
@@ -3175,7 +3183,7 @@ async function ensureActVolSheet(){
 async function loadActVolData(){
   var id=getSheetId();if(!id){actVolTargets=[];return;}
   try{
-    var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+'/values/'+encodeURIComponent(ACTVOL_TARGET_SHEET+'!A2:I2000'));
+    var data=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+id+'/values/'+encodeURIComponent(ACTVOL_TARGET_SHEET+'!A2:J2000'));
     actVolTargets=parseRows(data.values||[],ACTVOL_FIELDS).filter(function(x){return x.id;});
     _actVolEnsured=true;
   }catch(e){actVolTargets=[];} // シート未作成（初回保存時に自動生成）
@@ -3185,7 +3193,7 @@ async function saveActVolTarget(month,assignee,vals){
   var idx=actVolTargets.findIndex(function(t){return t.month===month&&t.assignee===assignee;});
   var prev=idx>=0?actVolTargets[idx]:{};
   var obj={id:(idx>=0?prev.id:generateId()),month:month,assignee:assignee,
-    visit:vals.visit,call:vals.call,email:vals.email,meeting:vals.meeting,other:vals.other,updatedAt:todayStr()};
+    visit:vals.visit,call:vals.call,email:vals.email,meeting:vals.meeting,other:vals.other,updatedAt:todayStr(),flyer:vals.flyer||''};
   if(idx>=0){actVolTargets[idx]=obj;await updateRow(ACTVOL_TARGET_SHEET,idx,obj,ACTVOL_FIELDS);}
   else{actVolTargets.push(obj);await appendRow(ACTVOL_TARGET_SHEET,obj,ACTVOL_FIELDS);}
 }
@@ -3193,6 +3201,7 @@ async function saveActVolRow(i){
   var p=avPersons[i];if(!p)return;
   var vals={};
   ACTIVITY_TYPES.forEach(function(t){var el=document.getElementById('avt_'+i+'_'+t.key);vals[t.key]=el?(el.value||''):'';});
+  var fe=document.getElementById('avf_'+i);vals.flyer=fe?(fe.value||''):'';
   try{await saveActVolTarget(actVolMonth,p,vals);showToast('目標を保存しました');drawActVol();}
   catch(e){showToast('目標の保存に失敗しました');console.error(e);}
 }
@@ -3219,6 +3228,14 @@ function drawActVol(){
     actual[p][k]=(actual[p][k]||0)+1;
   });
 
+  // チラシ配布（フラグ集計・種別とは独立／配布先＝顧客）
+  var flyerActual={},flyerList=[];
+  activities.filter(function(a){return ym(a.datetime)===m&&String(a.flyerDistributed)==='1';}).forEach(function(a){
+    var p=normalizeAssignee(a.assignee)||'(不明)';
+    flyerActual[p]=(flyerActual[p]||0)+1;
+    flyerList.push(a);
+  });
+
   // 担当ロスター：営業チーム(浦/山﨑) ∪ 全活動の担当 ∪ 当月目標保有者 ∪ 当月活動者
   var persons=['浦','山﨑'];
   activities.forEach(function(a){var p=normalizeAssignee(a.assignee);if(p&&persons.indexOf(p)===-1)persons.push(p);});
@@ -3242,6 +3259,10 @@ function drawActVol(){
   });
   function personA(p){var s=0;ACTIVITY_TYPES.forEach(function(t){s+=aNum(p,t.key);});return s;}
   function personT(p){var s=0;ACTIVITY_TYPES.forEach(function(t){s+=tnum(p,t.key);});return s;}
+  // チラシ配布：担当別実績/目標と営業部計（活動合計には含めない）
+  function fNum(p){return flyerActual[p]||0;}
+  function tflyer(p){return Number(tget(p).flyer)||0;}
+  var flyDeptA=0,flyDeptT=0;persons.forEach(function(p){flyDeptA+=fNum(p);flyDeptT+=tflyer(p);});
 
   var months=monthsWindow(1,5);if(months.indexOf(m)===-1)months.unshift(m);
   var isFuture=m>currentMonthStr();
@@ -3257,6 +3278,7 @@ function drawActVol(){
   h+='<div class="rep-kpi"><div class="lab">活動合計</div><div class="big">'+gA+'<small> / '+gT+' 件</small></div><div class="bar"><i style="width:'+(gT?Math.min(100,Math.round(gA/gT*100)):0)+'%"></i></div></div>';
   h+='<div class="rep-kpi"><div class="lab">🚶 訪問</div><div class="big">'+deptA.visit+'<small> / '+deptT.visit+' 件</small></div><div class="bar"><i style="width:'+(deptT.visit?Math.min(100,Math.round(deptA.visit/deptT.visit*100)):0)+'%"></i></div></div>';
   h+='<div class="rep-kpi"><div class="lab">📞 電話</div><div class="big">'+deptA.call+'<small> / '+deptT.call+' 件</small></div><div class="bar"><i style="width:'+(deptT.call?Math.min(100,Math.round(deptA.call/deptT.call*100)):0)+'%"></i></div></div>';
+  h+='<div class="rep-kpi"><div class="lab">🪧 チラシ配布</div><div class="big">'+flyDeptA+'<small> / '+flyDeptT+' 件</small></div><div class="bar"><i style="width:'+(flyDeptT?Math.min(100,Math.round(flyDeptA/flyDeptT*100)):0)+'%"></i></div></div>';
   h+='<div class="rep-kpi"><div class="lab">達成率（全体）</div><div class="big">'+(gT?Math.round(gA/gT*100):'—')+'<small> %</small></div></div>';
   h+='</div></div>';
 
@@ -3280,8 +3302,18 @@ function drawActVol(){
   h+='<tr class="rep-tot"><td>合計</td>';
   persons.forEach(function(p){var a=personA(p),tv=personT(p);h+='<td class="av-cell"><div class="av-actual">'+a+'</div><div class="av-sub">目標 '+tv+'</div>'+rate(a,tv)+'</td>';});
   h+='<td class="av-cell av-deptcol"><div class="av-actual">'+gA+'</div><div class="av-sub">目標 '+gT+'</div>'+rate(gA,gT)+'</td></tr>';
+  // チラシ配布行（フラグ集計・活動合計には含めない）
+  h+='<tr style="background:#fff8e6;border-top:2px solid #f0d98a"><td class="av-typecol">🪧 チラシ配布</td>';
+  persons.forEach(function(p,i){
+    var a=fNum(p),tv=tflyer(p);
+    h+='<td class="av-cell"><div class="av-actual '+avCls(a,tv)+'">'+a+'</div>';
+    if(p==='(不明)')h+='<div class="av-sub">—</div>';
+    else h+='<input class="av-tinput" id="avf_'+i+'" type="number" min="0" value="'+escapeAttr(tget(p).flyer||'')+'" onchange="saveActVolRow('+i+')" title="'+escapeAttr(p+'さんのチラシ配布目標')+'">';
+    h+='</td>';
+  });
+  h+='<td class="av-cell av-deptcol"><div class="av-actual '+avCls(flyDeptA,flyDeptT)+'">'+flyDeptA+'</div><div class="av-sub">目標 '+flyDeptT+'</div>'+rate(flyDeptA,flyDeptT)+'</td></tr>';
   h+='</tbody></table></div>';
-  h+='<div class="rep-note">※ 黄色セル＝各担当の月次目標（入力すると自動保存）。数字（実績）は「活動」の記録から自動集計。<span style="color:#059669;font-weight:700">緑=目標達成</span>／<span style="color:#b45309;font-weight:700">橙=未達</span>／灰=実績0。営業部計の目標は担当別目標の合計です。</div></div>';
+  h+='<div class="rep-note">※ 黄色セル＝各担当の月次目標（入力すると自動保存）。数字（実績）は「活動」の記録から自動集計。<span style="color:#059669;font-weight:700">緑=目標達成</span>／<span style="color:#b45309;font-weight:700">橙=未達</span>／灰=実績0。営業部計の目標は担当別目標の合計です。<br>🪧 チラシ配布は各活動の「チラシ配布」チェックを集計したもので、訪問等と重複するため<b>活動合計には含みません</b>。配布先は下の一覧で確認できます。</div></div>';
 
   // 種別別 達成率バー（営業部計）
   h+='<div class="card"><h2>3. 活動種別別 達成率（営業部計）</h2>';
@@ -3289,7 +3321,25 @@ function drawActVol(){
     var a=deptA[t.key],tv=deptT[t.key];var pct=tv?Math.min(100,Math.round(a/tv*100)):0;
     h+='<div class="av-barrow"><span class="lab">'+t.icon+' '+t.label+'</span><span class="av-bar"><i style="width:'+pct+'%;background:'+AV_TYPE_COLORS[t.key]+'"></i></span><span class="val">'+a+' / '+(tv||'—')+' 件 '+(tv?'('+Math.round(a/tv*100)+'%)':'')+'</span></div>';
   });
+  (function(){var pct=flyDeptT?Math.min(100,Math.round(flyDeptA/flyDeptT*100)):0;
+    h+='<div class="av-barrow"><span class="lab">🪧 チラシ配布</span><span class="av-bar"><i style="width:'+pct+'%;background:#e0a800"></i></span><span class="val">'+flyDeptA+' / '+(flyDeptT||'—')+' 件 '+(flyDeptT?'('+Math.round(flyDeptA/flyDeptT*100)+'%)':'')+'</span></div>';})();
   h+='<div class="rep-note">目標未設定の種別はバーが表示されません（上の表で目標を入力してください）。</div></div>';
+
+  // 4. チラシ配布先一覧
+  h+='<div class="card"><h2>4. 🪧 チラシ配布先一覧（'+monthLabel(m)+'）</h2>';
+  if(flyerList.length){
+    flyerList.sort(function(a,b){return (b.datetime||'').localeCompare(a.datetime||'');});
+    h+='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>日付</th><th>配布先（顧客）</th><th>担当</th><th>内容</th></tr></thead><tbody>';
+    flyerList.forEach(function(a){
+      h+='<tr><td>'+formatDate(a.datetime)+'</td><td style="font-weight:600">'+escapeHtml(a.company||'(顧客未設定)')+'</td><td>'+escapeHtml(normalizeAssignee(a.assignee)||a.assignee||'')+'</td><td style="font-size:.85em;color:#5a7a6a">'+escapeHtml((a.content||'').substring(0,40))+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+    var uniq={};flyerList.forEach(function(a){if(a.company)uniq[a.company]=true;});
+    h+='<div class="rep-note">配布 '+flyerList.length+' 件／配布先 '+Object.keys(uniq).length+' 社（重複配布を除く）。「活動」で顧客を選び「🪧 このお客様にチラシを配布した」にチェックした記録から集計しています。</div>';
+  }else{
+    h+='<div class="rep-note">この月のチラシ配布記録はまだありません。「活動」を記録する際に「🪧 このお客様にチラシを配布した」にチェックすると、ここに配布先が一覧表示されます。</div>';
+  }
+  h+='</div>';
 
   el.innerHTML=h;
 }
