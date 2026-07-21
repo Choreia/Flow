@@ -3175,6 +3175,36 @@ var ACTVOL_HEADER=['ID','月','担当','訪問','電話','メール','打合せ'
 var actVolTargets=[],_actVolEnsured=false,actVolMonth='',avPersons=[];
 var AV_TYPE_COLORS={visit:'#2563eb',call:'#d97706',email:'#7c3aed',meeting:'#059669',other:'#8a9a8a'};
 
+// --- HP掲載件数（mobilemover.jp のお知らせ公開本数・月別） ---
+// mobilemover.jp のビルドが /news-stats.json（月別本数＋記事一覧）を出力する。
+// GitHub Pages 配信で access-control-allow-origin:* が付くため、そのまま fetch できる。
+// 取得できなかった場合は「—」表示にして、活動量レポート本体は通常どおり描画する。
+var HP_STATS_URL='https://mobilemover.jp/news-stats.json';
+var hpStats=null,hpStatsErr='';
+async function loadHpStats(){
+  if(hpStats)return;
+  try{
+    var r=await fetch(HP_STATS_URL,{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    hpStats=await r.json();hpStatsErr='';
+  }catch(e){hpStats=null;hpStatsErr=(e&&e.message)||String(e);}
+}
+function hpCount(m){
+  if(!hpStats||!hpStats.monthly)return 0;
+  var f=hpStats.monthly.find(function(x){return x.month===m;});
+  return f?(Number(f.count)||0):0;
+}
+function hpArticlesOf(m){
+  if(!hpStats||!hpStats.articles)return [];
+  return hpStats.articles.filter(function(a){return a.month===m;});
+}
+// m を末尾とする直近 n ヶ月の 'YYYY-MM' 配列
+function hpMonthsBack(m,n){
+  var y=Number(m.slice(0,4)),mo=Number(m.slice(5,7)),out=[];
+  for(var i=n-1;i>=0;i--){var t=y*12+(mo-1)-i;out.push(String(Math.floor(t/12))+'-'+('0'+(t%12+1)).slice(-2));}
+  return out;
+}
+
 async function ensureActVolSheet(){
   if(_actVolEnsured)return;
   await ensureSheetWithHeader(ACTVOL_TARGET_SHEET,ACTVOL_HEADER);
@@ -3210,7 +3240,7 @@ async function renderActVol(){
   var el=document.getElementById('actvol-content');if(!el)return;
   if(!actVolMonth)actVolMonth=currentMonthStr();
   el.innerHTML='<div class="card" style="text-align:center;color:#8aa89a;padding:30px">読み込み中…</div>';
-  await loadActVolData();
+  await Promise.all([loadActVolData(),loadHpStats()]); // HP掲載件数は外部サイト読み込みのため並行取得（失敗しても続行）
   drawActVol();
 }
 function setActVolMonth(m){actVolMonth=m;drawActVol();}
@@ -3279,6 +3309,7 @@ function drawActVol(){
   h+='<div class="rep-kpi"><div class="lab">🚶 訪問</div><div class="big">'+deptA.visit+'<small> / '+deptT.visit+' 件</small></div><div class="bar"><i style="width:'+(deptT.visit?Math.min(100,Math.round(deptA.visit/deptT.visit*100)):0)+'%"></i></div></div>';
   h+='<div class="rep-kpi"><div class="lab">📞 電話</div><div class="big">'+deptA.call+'<small> / '+deptT.call+' 件</small></div><div class="bar"><i style="width:'+(deptT.call?Math.min(100,Math.round(deptA.call/deptT.call*100)):0)+'%"></i></div></div>';
   h+='<div class="rep-kpi"><div class="lab">🪧 チラシ配布</div><div class="big">'+flyDeptA+'<small> / '+flyDeptT+' 件</small></div><div class="bar"><i style="width:'+(flyDeptT?Math.min(100,Math.round(flyDeptA/flyDeptT*100)):0)+'%"></i></div></div>';
+  h+='<div class="rep-kpi"><div class="lab">🌐 HP掲載</div><div class="big">'+(hpStats?hpCount(m):'—')+'<small> 件</small></div></div>';
   h+='<div class="rep-kpi"><div class="lab">達成率（全体）</div><div class="big">'+(gT?Math.round(gA/gT*100):'—')+'<small> %</small></div></div>';
   h+='</div></div>';
 
@@ -3325,8 +3356,31 @@ function drawActVol(){
     h+='<div class="av-barrow"><span class="lab">🪧 チラシ配布</span><span class="av-bar"><i style="width:'+pct+'%;background:#e0a800"></i></span><span class="val">'+flyDeptA+' / '+(flyDeptT||'—')+' 件 '+(flyDeptT?'('+Math.round(flyDeptA/flyDeptT*100)+'%)':'')+'</span></div>';})();
   h+='<div class="rep-note">目標未設定の種別はバーが表示されません（上の表で目標を入力してください）。</div></div>';
 
-  // 4. チラシ配布先一覧
-  h+='<div class="card"><h2>4. 🪧 チラシ配布先一覧（'+monthLabel(m)+'）</h2>';
+  // 4. HP掲載件数（mobilemover.jp・月別）※活動記録ではなくサイトの公開実績を自動集計
+  h+='<div class="card"><h2>4. 🌐 HP掲載件数（mobilemover.jp・月別）</h2>';
+  if(hpStats){
+    var hpMs=hpMonthsBack(m,12),hpMax=1,hpSum=0;
+    hpMs.forEach(function(mm){var c=hpCount(mm);if(c>hpMax)hpMax=c;hpSum+=c;});
+    hpMs.forEach(function(mm){
+      var c=hpCount(mm);
+      h+='<div class="av-barrow"><span class="lab"'+(mm===m?' style="font-weight:700;color:#2f6b4f"':'')+'>'+mm.replace('-','/')+'</span><span class="av-bar"><i style="width:'+Math.round(c/hpMax*100)+'%;background:#0ea5e9"></i></span><span class="val">'+c+' 件</span></div>';
+    });
+    var hpList=hpArticlesOf(m);
+    if(hpList.length){
+      h+='<div style="overflow-x:auto;margin-top:12px"><table class="data-table"><thead><tr><th>公開日</th><th>記事</th><th>カテゴリ</th></tr></thead><tbody>';
+      hpList.slice().sort(function(a,b){return String(b.dateISO||'').localeCompare(String(a.dateISO||''));}).forEach(function(a){
+        h+='<tr><td>'+escapeHtml(a.dateISO||'')+'</td><td><a href="'+escapeAttr(a.url||'#')+'" target="_blank" rel="noopener" style="font-weight:600">'+escapeHtml(a.title||a.slug||'')+'</a></td><td>'+escapeHtml(a.category||'')+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+    }
+    h+='<div class="rep-note">'+monthLabel(m)+'の掲載 '+hpCount(m)+' 件／直近12ヶ月 '+hpSum+' 件（公開済みの記事は累計 '+(Number(hpStats.total)||0)+' 件）。mobilemover.jp のお知らせに<b>公開した記事</b>を自動集計しています（下書きは含みません）。サイトを更新すると自動で反映されるため、入力は不要です。</div>';
+  }else{
+    h+='<div class="rep-note">mobilemover.jp の掲載データを取得できませんでした'+(hpStatsErr?'（'+escapeHtml(hpStatsErr)+'）':'')+'。時間をおいて再読み込みしてください。</div>';
+  }
+  h+='</div>';
+
+  // 5. チラシ配布先一覧
+  h+='<div class="card"><h2>5. 🪧 チラシ配布先一覧（'+monthLabel(m)+'）</h2>';
   if(flyerList.length){
     flyerList.sort(function(a,b){return (b.datetime||'').localeCompare(a.datetime||'');});
     h+='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>日付</th><th>配布先（顧客）</th><th>担当</th><th>内容</th></tr></thead><tbody>';
