@@ -3198,6 +3198,22 @@ function hpArticlesOf(m){
   if(!hpStats||!hpStats.articles)return [];
   return hpStats.articles.filter(function(a){return a.month===m;});
 }
+// 記事の担当名を Choreia の担当表記に寄せる（'山崎'→'山﨑' 等）
+function hpNormAuthor(a){var n=(typeof normalizeAssignee==='function')?normalizeAssignee(a):a;return n||'(不明)';}
+// 担当 p の m 月の HP掲載件数（byAuthorMonth を担当名で正規化して合算）
+function hpCountPerson(p,m){
+  if(!hpStats||!hpStats.byAuthorMonth)return 0;var s=0;
+  for(var author in hpStats.byAuthorMonth){
+    if(hpNormAuthor(author)!==p)continue;
+    s+=Number(hpStats.byAuthorMonth[author][m])||0;
+  }
+  return s;
+}
+// stats に登場する担当（正規化後・重複除去）
+function hpAuthors(){
+  var set={};if(hpStats&&hpStats.byAuthorMonth){for(var a in hpStats.byAuthorMonth)set[hpNormAuthor(a)]=true;}
+  return Object.keys(set);
+}
 // m を末尾とする直近 n ヶ月の 'YYYY-MM' 配列
 function hpMonthsBack(m,n){
   var y=Number(m.slice(0,4)),mo=Number(m.slice(5,7)),out=[];
@@ -3271,6 +3287,7 @@ function drawActVol(){
   activities.forEach(function(a){var p=normalizeAssignee(a.assignee);if(p&&persons.indexOf(p)===-1)persons.push(p);});
   actVolTargets.filter(function(t){return t.month===m;}).forEach(function(t){if(t.assignee&&persons.indexOf(t.assignee)===-1)persons.push(t.assignee);});
   Object.keys(actual).forEach(function(p){if(persons.indexOf(p)===-1)persons.push(p);});
+  hpAuthors().forEach(function(p){if(persons.indexOf(p)===-1)persons.push(p);}); // HP掲載の担当（活動が無くても列を出す）
   function ptot(p){var o=actual[p]||{},s=0;for(var k in o)s+=o[k];return s;}
   persons.sort(function(a,b){if(a==='(不明)')return 1;if(b==='(不明)')return -1;return ptot(b)-ptot(a)||a.localeCompare(b,'ja');});
   avPersons=persons;
@@ -3293,6 +3310,8 @@ function drawActVol(){
   function fNum(p){return flyerActual[p]||0;}
   function tflyer(p){return Number(tget(p).flyer)||0;}
   var flyDeptA=0,flyDeptT=0;persons.forEach(function(p){flyDeptA+=fNum(p);flyDeptT+=tflyer(p);});
+  // HP掲載：担当別と営業部計（当月）。目標は設けず実績のみ
+  var hpDeptA=hpStats?hpCount(m):0;
 
   var months=monthsWindow(1,5);if(months.indexOf(m)===-1)months.unshift(m);
   var isFuture=m>currentMonthStr();
@@ -3343,8 +3362,14 @@ function drawActVol(){
     h+='</td>';
   });
   h+='<td class="av-cell av-deptcol"><div class="av-actual '+avCls(flyDeptA,flyDeptT)+'">'+flyDeptA+'</div><div class="av-sub">目標 '+flyDeptT+'</div>'+rate(flyDeptA,flyDeptT)+'</td></tr>';
+  // HP掲載行（mobilemover.jp の公開記事を担当別に自動集計・活動合計には含めない／目標入力なし）
+  if(hpStats){
+    h+='<tr style="background:#eef6ff;border-top:2px solid #bcdcff"><td class="av-typecol">🌐 HP掲載</td>';
+    persons.forEach(function(p){var c=hpCountPerson(p,m);h+='<td class="av-cell"><div class="av-actual '+(c>0?'':'z')+'">'+c+'</div></td>';});
+    h+='<td class="av-cell av-deptcol"><div class="av-actual '+(hpDeptA>0?'':'z')+'">'+hpDeptA+'</div><div class="av-sub">件</div></td></tr>';
+  }
   h+='</tbody></table></div>';
-  h+='<div class="rep-note">※ 黄色セル＝各担当の月次目標（入力すると自動保存）。数字（実績）は「活動」の記録から自動集計。<span style="color:#059669;font-weight:700">緑=目標達成</span>／<span style="color:#b45309;font-weight:700">橙=未達</span>／灰=実績0。営業部計の目標は担当別目標の合計です。<br>🪧 チラシ配布は各活動の「チラシ配布」チェックを集計したもので、訪問等と重複するため<b>活動合計には含みません</b>。配布先は下の一覧で確認できます。</div></div>';
+  h+='<div class="rep-note">※ 黄色セル＝各担当の月次目標（入力すると自動保存）。数字（実績）は「活動」の記録から自動集計。<span style="color:#059669;font-weight:700">緑=目標達成</span>／<span style="color:#b45309;font-weight:700">橙=未達</span>／灰=実績0。営業部計の目標は担当別目標の合計です。<br>🪧 チラシ配布は各活動の「チラシ配布」チェックを集計したもので、訪問等と重複するため<b>活動合計には含みません</b>。配布先は下の一覧で確認できます。'+(hpStats?'<br>🌐 HP掲載は mobilemover.jp に公開した記事を<b>記事の担当者ごと</b>に集計したものです（サイト更新で自動反映・目標設定なし）。担当は記事側で設定します。':'')+'</div></div>';
 
   // 種別別 達成率バー（営業部計）
   h+='<div class="card"><h2>3. 活動種別別 達成率（営業部計）</h2>';
@@ -3367,13 +3392,16 @@ function drawActVol(){
     });
     var hpList=hpArticlesOf(m);
     if(hpList.length){
-      h+='<div style="overflow-x:auto;margin-top:12px"><table class="data-table"><thead><tr><th>公開日</th><th>記事</th><th>カテゴリ</th></tr></thead><tbody>';
+      h+='<div style="overflow-x:auto;margin-top:12px"><table class="data-table"><thead><tr><th>公開日</th><th>記事</th><th>担当</th><th>カテゴリ</th></tr></thead><tbody>';
       hpList.slice().sort(function(a,b){return String(b.dateISO||'').localeCompare(String(a.dateISO||''));}).forEach(function(a){
-        h+='<tr><td>'+escapeHtml(a.dateISO||'')+'</td><td><a href="'+escapeAttr(a.url||'#')+'" target="_blank" rel="noopener" style="font-weight:600">'+escapeHtml(a.title||a.slug||'')+'</a></td><td>'+escapeHtml(a.category||'')+'</td></tr>';
+        h+='<tr><td>'+escapeHtml(a.dateISO||'')+'</td><td><a href="'+escapeAttr(a.url||'#')+'" target="_blank" rel="noopener" style="font-weight:600">'+escapeHtml(a.title||a.slug||'')+'</a></td><td>'+escapeHtml(hpNormAuthor(a.author))+'</td><td>'+escapeHtml(a.category||'')+'</td></tr>';
       });
       h+='</tbody></table></div>';
     }
-    h+='<div class="rep-note">'+monthLabel(m)+'の掲載 '+hpCount(m)+' 件／直近12ヶ月 '+hpSum+' 件（公開済みの記事は累計 '+(Number(hpStats.total)||0)+' 件）。mobilemover.jp のお知らせに<b>公開した記事</b>を自動集計しています（下書きは含みません）。サイトを更新すると自動で反映されるため、入力は不要です。</div>';
+    // 当月の担当別内訳
+    var hpByP=persons.map(function(p){return {p:p,c:hpCountPerson(p,m)};}).filter(function(x){return x.c>0;});
+    var hpBreak=hpByP.length?hpByP.map(function(x){return escapeHtml(x.p)+' '+x.c+'件';}).join('／'):'—';
+    h+='<div class="rep-note">'+monthLabel(m)+'の掲載 '+hpCount(m)+' 件（担当別：'+hpBreak+'）／直近12ヶ月 '+hpSum+' 件（公開済みの記事は累計 '+(Number(hpStats.total)||0)+' 件）。mobilemover.jp のお知らせに<b>公開した記事</b>を、記事に設定した<b>担当者ごと</b>に自動集計しています（下書きは含みません）。サイトを更新すると自動で反映されるため、入力は不要です。</div>';
   }else{
     h+='<div class="rep-note">mobilemover.jp の掲載データを取得できませんでした'+(hpStatsErr?'（'+escapeHtml(hpStatsErr)+'）':'')+'。時間をおいて再読み込みしてください。</div>';
   }
