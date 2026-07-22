@@ -3180,6 +3180,8 @@ var AV_TYPE_COLORS={visit:'#2563eb',call:'#d97706',email:'#7c3aed',meeting:'#059
 // GitHub Pages 配信で access-control-allow-origin:* が付くため、そのまま fetch できる。
 // 取得できなかった場合は「—」表示にして、活動量レポート本体は通常どおり描画する。
 var HP_STATS_URL='https://mobilemover.jp/news-stats.json';
+// HP掲載の営業部計・月次目標（週1回投稿＝月4件。石井さん設定 2026-07-22）。変更時はこの数値を書き換える。
+var HP_TARGET_MONTHLY=4;
 var hpStats=null,hpStatsErr='';
 async function loadHpStats(){
   if(hpStats)return;
@@ -3328,7 +3330,7 @@ function drawActVol(){
   h+='<div class="rep-kpi"><div class="lab">🚶 訪問</div><div class="big">'+deptA.visit+'<small> / '+deptT.visit+' 件</small></div><div class="bar"><i style="width:'+(deptT.visit?Math.min(100,Math.round(deptA.visit/deptT.visit*100)):0)+'%"></i></div></div>';
   h+='<div class="rep-kpi"><div class="lab">📞 電話</div><div class="big">'+deptA.call+'<small> / '+deptT.call+' 件</small></div><div class="bar"><i style="width:'+(deptT.call?Math.min(100,Math.round(deptA.call/deptT.call*100)):0)+'%"></i></div></div>';
   h+='<div class="rep-kpi"><div class="lab">🪧 チラシ配布</div><div class="big">'+flyDeptA+'<small> / '+flyDeptT+' 件</small></div><div class="bar"><i style="width:'+(flyDeptT?Math.min(100,Math.round(flyDeptA/flyDeptT*100)):0)+'%"></i></div></div>';
-  h+='<div class="rep-kpi"><div class="lab">🌐 HP掲載</div><div class="big">'+(hpStats?hpCount(m):'—')+'<small> 件</small></div></div>';
+  h+='<div class="rep-kpi"><div class="lab">🌐 HP掲載</div><div class="big">'+(hpStats?hpCount(m):'—')+'<small> / '+HP_TARGET_MONTHLY+' 件</small></div>'+(hpStats?'<div class="bar"><i style="width:'+Math.min(100,Math.round(hpCount(m)/HP_TARGET_MONTHLY*100))+'%"></i></div>':'')+'</div>';
   h+='<div class="rep-kpi"><div class="lab">達成率（全体）</div><div class="big">'+(gT?Math.round(gA/gT*100):'—')+'<small> %</small></div></div>';
   h+='</div></div>';
 
@@ -3366,10 +3368,10 @@ function drawActVol(){
   if(hpStats){
     h+='<tr style="background:#eef6ff;border-top:2px solid #bcdcff"><td class="av-typecol">🌐 HP掲載</td>';
     persons.forEach(function(p){var c=hpCountPerson(p,m);h+='<td class="av-cell"><div class="av-actual '+(c>0?'':'z')+'">'+c+'</div></td>';});
-    h+='<td class="av-cell av-deptcol"><div class="av-actual '+(hpDeptA>0?'':'z')+'">'+hpDeptA+'</div><div class="av-sub">件</div></td></tr>';
+    h+='<td class="av-cell av-deptcol"><div class="av-actual '+avCls(hpDeptA,HP_TARGET_MONTHLY)+'">'+hpDeptA+'</div><div class="av-sub">目標 '+HP_TARGET_MONTHLY+'</div>'+rate(hpDeptA,HP_TARGET_MONTHLY)+'</td></tr>';
   }
   h+='</tbody></table></div>';
-  h+='<div class="rep-note">※ 黄色セル＝各担当の月次目標（入力すると自動保存）。数字（実績）は「活動」の記録から自動集計。<span style="color:#059669;font-weight:700">緑=目標達成</span>／<span style="color:#b45309;font-weight:700">橙=未達</span>／灰=実績0。営業部計の目標は担当別目標の合計です。<br>🪧 チラシ配布は各活動の「チラシ配布」チェックを集計したもので、訪問等と重複するため<b>活動合計には含みません</b>。配布先は下の一覧で確認できます。'+(hpStats?'<br>🌐 HP掲載は mobilemover.jp に公開した記事を<b>記事の担当者ごと</b>に集計したものです（サイト更新で自動反映・目標設定なし）。担当は記事側で設定します。':'')+'</div></div>';
+  h+='<div class="rep-note">※ 黄色セル＝各担当の月次目標（入力すると自動保存）。数字（実績）は「活動」の記録から自動集計。<span style="color:#059669;font-weight:700">緑=目標達成</span>／<span style="color:#b45309;font-weight:700">橙=未達</span>／灰=実績0。営業部計の目標は担当別目標の合計です。<br>🪧 チラシ配布は各活動の「チラシ配布」チェックを集計したもので、訪問等と重複するため<b>活動合計には含みません</b>。配布先は下の一覧で確認できます。'+(hpStats?'<br>🌐 HP掲載は mobilemover.jp に公開した記事を<b>記事の担当者ごと</b>に集計したものです（サイト更新で自動反映）。担当は記事側で設定します。目標は<b>営業部計 月'+HP_TARGET_MONTHLY+'件</b>（週1回投稿）。':'')+'</div></div>';
 
   // 種別別 達成率バー（営業部計）
   h+='<div class="card"><h2>3. 活動種別別 達成率（営業部計）</h2>';
@@ -3379,7 +3381,9 @@ function drawActVol(){
   });
   (function(){var pct=flyDeptT?Math.min(100,Math.round(flyDeptA/flyDeptT*100)):0;
     h+='<div class="av-barrow"><span class="lab">🪧 チラシ配布</span><span class="av-bar"><i style="width:'+pct+'%;background:#e0a800"></i></span><span class="val">'+flyDeptA+' / '+(flyDeptT||'—')+' 件 '+(flyDeptT?'('+Math.round(flyDeptA/flyDeptT*100)+'%)':'')+'</span></div>';})();
-  h+='<div class="rep-note">目標未設定の種別はバーが表示されません（上の表で目標を入力してください）。</div></div>';
+  if(hpStats){var _hpPct=Math.min(100,Math.round(hpDeptA/HP_TARGET_MONTHLY*100));
+    h+='<div class="av-barrow"><span class="lab">🌐 HP掲載</span><span class="av-bar"><i style="width:'+_hpPct+'%;background:#0ea5e9"></i></span><span class="val">'+hpDeptA+' / '+HP_TARGET_MONTHLY+' 件 ('+Math.round(hpDeptA/HP_TARGET_MONTHLY*100)+'%)</span></div>';}
+  h+='<div class="rep-note">目標未設定の種別はバーが表示されません（上の表で目標を入力してください）。🌐 HP掲載の目標は営業部計 月'+HP_TARGET_MONTHLY+'件（週1回投稿）です。</div></div>';
 
   // 4. HP掲載件数（mobilemover.jp・月別）※活動記録ではなくサイトの公開実績を自動集計
   h+='<div class="card"><h2>4. 🌐 HP掲載件数（mobilemover.jp・月別）</h2>';
