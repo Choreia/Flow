@@ -2047,6 +2047,20 @@ function buildSelectOptions(values,selected,includeBlank){
   return h;
 }
 
+// 担当者プルダウン用: マスタのメンバー∪エイリアス正規名∪ログインユーザー(∪編集中の既存値)。
+// 自由入力だと訪問先名などの誤入力がそのまま活動量の担当列になるため選択式に限定する。
+function memberSelectOptions(selected){
+  var names=[];
+  function add(n){n=normalizeAssignee(n);if(n&&names.indexOf(n)===-1)names.push(n);}
+  (customerMaster.members||[]).forEach(add);
+  Object.keys(ASSIGNEE_ALIASES).forEach(function(k){add(ASSIGNEE_ALIASES[k]);});
+  add(currentUser&&currentUser.name);
+  var sel=normalizeAssignee(selected);
+  if(sel)add(sel);
+  names.sort();
+  return buildSelectOptions(names,sel,false);
+}
+
 function showCustomerForm(editId){
   var c=editId?customers.find(function(x){return x.id===editId;}):null;
   document.getElementById('modal-title').textContent=c?'顧客を編集':'新規顧客';
@@ -2614,7 +2628,7 @@ function showDealForm(editId,preCustomerId){
   h+='<div class="form-group"><label>金額</label><div style="display:flex;gap:6px"><input class="form-input" id="f-amount" type="number" value="'+(d?d.amount||'':'')+'" style="flex:1"><select class="form-input" id="f-amountUnit" style="width:auto;min-width:60px">';
   AMOUNT_UNITS.forEach(function(u){h+='<option value="'+u+'"'+((d&&d.amountUnit||'')===u?' selected':'')+'>'+(!u?'—':'/'+u)+'</option>';});
   h+='</select></div></div></div>';
-  h+='<div class="form-group"><label>担当者</label><input class="form-input" id="f-assignee" value="'+escapeAttr(d?d.assignee:currentUser.name)+'"></div>';
+  h+='<div class="form-group"><label>担当者</label><select class="form-input" id="f-assignee">'+memberSelectOptions(d?d.assignee:(currentUser&&currentUser.name||''))+'</select></div>';
   h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
   h+='<div class="form-group"><label>開始日</label><input class="form-input" id="f-startdate" type="date" value="'+escapeAttr(d?d.startDate:todayStr())+'"></div>';
   h+='<div class="form-group"><label>期限</label><input class="form-input" id="f-deadline" type="date" value="'+escapeAttr(d?d.deadline:'')+'"></div></div>';
@@ -2930,7 +2944,7 @@ function showActivityForm(preCustomerId,preDealId,editId){
   h+='<div class="form-group"><label>種別</label><select class="form-input" id="f-acttype">'+typeOptions+'</select></div>';
   h+='<div class="form-group"><label>日時</label><input class="form-input" id="f-actdate" type="date" value="'+escapeAttr(existing?existing.datetime:todayStr())+'"></div></div>';
   h+='<div class="form-group"><label>内容 *</label><textarea class="form-input" id="f-actcontent" required placeholder="活動内容を入力...">'+escapeHtml(existing?existing.content:'')+'</textarea></div>';
-  h+='<div class="form-group"><label>担当者</label><input class="form-input" id="f-actassignee" value="'+escapeAttr(existing?existing.assignee:currentUser.name)+'"></div>';
+  h+='<div class="form-group"><label>担当者</label><select class="form-input" id="f-actassignee">'+memberSelectOptions(existing?existing.assignee:(currentUser&&currentUser.name||''))+'</select></div>';
   // チラシ配布（配布先＝上で選んだ顧客）
   h+='<div class="form-group" style="background:#fff8e6;border:1px solid #f0d98a;border-radius:10px;padding:10px 12px;margin-bottom:12px">';
   h+='<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;font-weight:600"><input type="checkbox" id="f-actflyer" style="width:auto;margin:0"'+(existing&&String(existing.flyerDistributed)==='1'?' checked':'')+'>&#129386; このお客様にチラシを配布した</label>';
