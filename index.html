@@ -679,8 +679,15 @@ function isMMDeal(d){
   return n.indexOf('mobile mover')!==-1||n.indexOf('ｍｏｂｉｌｅ')!==-1||/(^|[^a-z])mm([^a-z]|$)/.test(n)||n.indexOf('ＭＭ')!==-1;
 }
 // 担当名の名寄せ（英名/表記ゆれ → 浦・山﨑 等）
-var ASSIGNEE_ALIASES={'kensuke yamazaki':'山﨑','k.yamazaki':'山﨑','山崎':'山﨑','山﨑':'山﨑','yamazaki':'山﨑','ura shingo':'浦','shingo ura':'浦','浦':'浦','ura':'浦','yuriko kato':'加藤','y.kato':'加藤','加藤':'加藤','kato':'加藤','jayant kumar':'Jayant Kumar','hirokazu ishii':'石井','hiro ishii':'石井','石井':'石井','ishii':'石井'};
-function normalizeAssignee(name){if(!name)return '';var k=String(name).trim().toLowerCase();return ASSIGNEE_ALIASES[k]||String(name).trim();}
+var ASSIGNEE_ALIASES={'kensuke yamazaki':'山﨑','k.yamazaki':'山﨑','山崎':'山﨑','山﨑':'山﨑','yamazaki':'山﨑','ura shingo':'浦','shingo ura':'浦','浦':'浦','ura':'浦','yuriko kato':'加藤','y.kato':'加藤','加藤':'加藤','kato':'加藤','kei omune':'大棟','omune kei':'大棟','k.omune':'大棟','omune':'大棟','大棟':'大棟','大棟圭':'大棟','大棟 圭':'大棟','大棟　圭':'大棟','jayant kumar':'Jayant Kumar','hirokazu ishii':'石井','hiro ishii':'石井','石井':'石井','ishii':'石井'};
+// 訪問先名などが担当者欄に誤入力された分の読み替え（シート側を直せば不要）
+// 辻: 2026-07-17「辻ファーム」訪問の担当者欄に訪問先名が入っていた（同日の前後の記録と同じく山﨑さんの活動）
+var ASSIGNEE_FIXUPS={'辻':'山﨑'};
+function normalizeAssignee(name){if(!name)return '';var k=String(name).trim().toLowerCase();var n=ASSIGNEE_ALIASES[k]||String(name).trim();return ASSIGNEE_FIXUPS[n]||n;}
+// MMレポート／活動量の担当ロスター
+var SALES_TEAM=['浦','山﨑','大棟'];   // 実績が無くても列（行）を出す営業チーム
+var ROSTER_HIDDEN=['加藤'];           // 営業チーム外＝レポートの担当一覧に出さない（記録自体は残る）
+function rosterAdd(list,name){var n=normalizeAssignee(name);if(n&&ROSTER_HIDDEN.indexOf(n)===-1&&list.indexOf(n)===-1)list.push(n);}
 // 明細の台数（単位=台）合計
 function dealUnits(d){var li=parseDealLineItems(d&&d.lineItems),u=0;li.forEach(function(x){if((x.unit||'')==='台')u+=Number(x.qty)||0;});return u;}
 var ACTIVITY_TYPES=[
@@ -3080,10 +3087,10 @@ function drawReport(){
   // 当月に受注以降へ到達したMM案件
   var wonDeals=mmDeals.filter(function(d){return WON_STATUS_KEYS.indexOf(d.status)!==-1&&dealWonMonth(d)===m;});
 
-  // 担当一覧（浦・山﨑＋当月実績/目標がある人）
-  var persons=['浦','山﨑'];
-  wonDeals.forEach(function(d){var a=normalizeAssignee(d.assignee);if(a&&persons.indexOf(a)===-1)persons.push(a);});
-  mmGoals.filter(function(g){return g.month===m;}).forEach(function(g){if(g.assignee&&persons.indexOf(g.assignee)===-1)persons.push(g.assignee);});
+  // 担当一覧（営業チーム＋当月実績/目標がある人）
+  var persons=SALES_TEAM.slice();
+  wonDeals.forEach(function(d){rosterAdd(persons,d.assignee);});
+  mmGoals.filter(function(g){return g.month===m;}).forEach(function(g){rosterAdd(persons,g.assignee);});
   reportPersons=persons;
 
   var rows=[],totTU=0,totFU=0,totAU=0,totTS=0,totAS=0;
@@ -3298,12 +3305,12 @@ function drawActVol(){
     flyerList.push(a);
   });
 
-  // 担当ロスター：営業チーム(浦/山﨑) ∪ 全活動の担当 ∪ 当月目標保有者 ∪ 当月活動者
-  var persons=['浦','山﨑'];
-  activities.forEach(function(a){var p=normalizeAssignee(a.assignee);if(p&&persons.indexOf(p)===-1)persons.push(p);});
-  actVolTargets.filter(function(t){return t.month===m;}).forEach(function(t){if(t.assignee&&persons.indexOf(t.assignee)===-1)persons.push(t.assignee);});
-  Object.keys(actual).forEach(function(p){if(persons.indexOf(p)===-1)persons.push(p);});
-  hpAuthors().forEach(function(p){if(persons.indexOf(p)===-1)persons.push(p);}); // HP掲載の担当（活動が無くても列を出す）
+  // 担当ロスター：営業チーム(浦/山﨑/大棟) ∪ 全活動の担当 ∪ 当月目標保有者 ∪ 当月活動者（ROSTER_HIDDENは除外）
+  var persons=SALES_TEAM.slice();
+  activities.forEach(function(a){rosterAdd(persons,a.assignee);});
+  actVolTargets.filter(function(t){return t.month===m;}).forEach(function(t){rosterAdd(persons,t.assignee);});
+  Object.keys(actual).forEach(function(p){rosterAdd(persons,p);});
+  hpAuthors().forEach(function(p){rosterAdd(persons,p);}); // HP掲載の担当（活動が無くても列を出す）
   function ptot(p){var o=actual[p]||{},s=0;for(var k in o)s+=o[k];return s;}
   persons.sort(function(a,b){if(a==='(不明)')return 1;if(b==='(不明)')return -1;return ptot(b)-ptot(a)||a.localeCompare(b,'ja');});
   avPersons=persons;
