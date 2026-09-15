@@ -679,7 +679,7 @@ function isMMDeal(d){
   return n.indexOf('mobile mover')!==-1||n.indexOf('ｍｏｂｉｌｅ')!==-1||/(^|[^a-z])mm([^a-z]|$)/.test(n)||n.indexOf('ＭＭ')!==-1;
 }
 // 担当名の名寄せ（英名/表記ゆれ → 浦・山﨑 等）
-var ASSIGNEE_ALIASES={'kensuke yamazaki':'山﨑','k.yamazaki':'山﨑','山崎':'山﨑','山﨑':'山﨑','yamazaki':'山﨑','ura shingo':'浦','shingo ura':'浦','浦':'浦','ura':'浦','yuriko kato':'加藤','y.kato':'加藤','加藤':'加藤','kato':'加藤','kei omune':'大棟','omune kei':'大棟','k.omune':'大棟','omune':'大棟','大棟':'大棟','大棟圭':'大棟','大棟 圭':'大棟','大棟　圭':'大棟','jayant kumar':'Jayant Kumar','hirokazu ishii':'石井','hiro ishii':'石井','石井':'石井','ishii':'石井'};
+var ASSIGNEE_ALIASES={'kensuke yamazaki':'山﨑','k.yamazaki':'山﨑','山崎':'山﨑','山﨑':'山﨑','yamazaki':'山﨑','ura shingo':'浦','shingo ura':'浦','浦':'浦','ura':'浦','yuriko kato':'加藤','y.kato':'加藤','加藤':'加藤','kato':'加藤','kei omune':'大棟','omune kei':'大棟','k.omune':'大棟','omune':'大棟','大棟':'大棟','大棟圭':'大棟','大棟 圭':'大棟','大棟　圭':'大棟','jayant kumar':'Jayant Kumar','hirokazu ishii':'石井','hiro ishii':'石井','石井':'石井','ishii':'石井','yasuhiko umebayashi':'梅林','umebayashi yasuhiko':'梅林','y.umebayashi':'梅林','umebayashi':'梅林','梅林':'梅林','梅林泰彦':'梅林','梅林 泰彦':'梅林','yutaka tagami':'田上','tagami yutaka':'田上','y.tagami':'田上','tagami':'田上','田上':'田上','田上豊':'田上','田上 豊':'田上','moe aizawa':'相澤','aizawa moe':'相澤','m.aizawa':'相澤','aizawa':'相澤','相澤':'相澤','相沢':'相澤'};
 // 訪問先名などが担当者欄に誤入力された分の読み替え（シート側を直せば不要）
 // 辻: 2026-07-17「辻ファーム」訪問の担当者欄に訪問先名が入っていた（同日の前後の記録と同じく山﨑さんの活動）
 var ASSIGNEE_FIXUPS={'辻':'山﨑'};
@@ -2814,7 +2814,8 @@ async function changeDealStatus(id,status){
 function isDealOwner(d){
   if(!d)return false;
   if(isAdmin())return true;
-  return d.assignee===currentUser.name;
+  var mine=normalizeAssignee(currentUser.name),theirs=normalizeAssignee(d.assignee);
+  return !!mine&&mine===theirs;
 }
 async function trashDriveFile(fileId){
   if(!fileId)return;
@@ -2902,10 +2903,8 @@ function showActivityDetail(id){
   var cust=customers.find(function(c){return c.id===a.customerId});
   var deal=a.dealId?deals.find(function(d){return d.id===a.dealId}):null;
   var h='<h2>'+at.icon+' '+escapeHtml(at.label)+'<div>';
-  if(isActivityOwner(a)){
-    h+='<button class="btn-icon" onclick="closeDetail();showEditActivityForm(\''+escapeAttr(id)+'\')">&#9998;</button>';
-    h+='<button class="btn-icon btn-danger" onclick="deleteActivity(\''+escapeAttr(id)+'\')">&#128465;</button>';
-  }
+  if(canEditActivity(a))h+='<button class="btn-icon" title="編集" onclick="closeDetail();showEditActivityForm(\''+escapeAttr(id)+'\')">&#9998;</button>';
+  if(isActivityOwner(a))h+='<button class="btn-icon btn-danger" title="削除" onclick="deleteActivity(\''+escapeAttr(id)+'\')">&#128465;</button>';
   h+='</div></h2>';
   h+='<div style="display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.9em;margin-bottom:16px">';
   h+='<span style="color:#5a7a6a">日時</span><span>'+formatDate(a.datetime)+'</span>';
@@ -3031,10 +3030,15 @@ async function saveActivity(e,editId){
 }
 
 function isActivityOwner(a){
+  // 表記ゆれ（Google表示名 "Kensuke Yamazaki" と担当者プルダウン "山﨑" 等）を名寄せして比較する。
+  // 2026-07-28に担当者がプルダウン化されて以降、素の文字列比較では本人でも一致せず編集/削除ボタンが消えていた（山﨑さん指摘 2026-09-15）
   if(!a)return false;
   if(isAdmin())return true;
-  return a.assignee===currentUser.name;
+  var mine=normalizeAssignee(currentUser.name),theirs=normalizeAssignee(a.assignee);
+  return !!mine&&mine===theirs;
 }
+// 活動の編集はログイン済みなら誰でも可（担当者の誤入力を本人以外が直せるように。案件の削除を全員可にした2026-06の判断と同じ扱い）。削除は本人/管理者のみ。
+function canEditActivity(a){return !!a;}
 async function deleteActivity(id){
   var a=activities.find(function(x){return x.id===id});
   if(!isActivityOwner(a)){showToast('削除は記録した本人のみ可能です');return;}
