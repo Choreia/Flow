@@ -690,6 +690,120 @@ var ROSTER_HIDDEN=['加藤'];           // 営業チーム外＝レポートの�
 function rosterAdd(list,name){var n=normalizeAssignee(name);if(n&&ROSTER_HIDDEN.indexOf(n)===-1&&list.indexOf(n)===-1)list.push(n);}
 // 明細の台数（単位=台）合計
 function dealUnits(d){var li=parseDealLineItems(d&&d.lineItems),u=0;li.forEach(function(x){if((x.unit||'')==='台')u+=Number(x.qty)||0;});return u;}
+
+// ==================== Mobile Mover 価格表・原価（山﨑さん依頼 2026-09-15） ====================
+// 価格・原価の正は山﨑さんのスプレッドシート「代理店小売価格」タブ（更新はシート側で行う＝石井さん 2026-09-15）。
+// Choreiaはログイン中ユーザーの権限でそのタブを読み、読めないときは内蔵の写し（MM_PRICE_FALLBACK）を使う。
+// 代理店マージン率は案件ごとに変更できる（石井さん）。卸価格＝定価×(1−マージン率)。
+// 屋内自動走行のように価格が未確定（セルが数値でない）の商品は「仮価格」として金額を手入力する（石井さん）。
+var MM_PRICE_SHEET_ID='1kne4h5TiyxrrBHzvjhCszm2Lnga4ZrIHv_qZOgBdd-M';
+var MM_PRICE_TAB='代理店小売価格';
+var MM_DEFAULT_MARGIN=20;   // 代理店マージン既定(%)
+var MM_PRICE_FALLBACK_DATE='2026-09-15';
+var MM_PRICE_FALLBACK=[
+  {section:'body',  name:'MOBILE MOVER',                              usage:'EMC-150',        spec:'標準仕様',                 price:1600000, cost:1000000},
+  {section:'work',  name:'HakkoBuddy',                                usage:'運搬',           spec:'',                         price:50000,   cost:24339},
+  {section:'work',  name:'Crop Guardy F-type Card Jetting',           usage:'防除',           spec:'F型カードジェッター',       price:450000,  cost:311349},
+  {section:'work',  name:'Crop Guardy V-type Card Jetting',           usage:'防除',           spec:'V型カードジェッター',       price:450000,  cost:304349},
+  {section:'work',  name:'Crop Guardy Power sprayer tank-equipped',   usage:'防除',           spec:'動噴タンク装備型',          price:750000,  cost:519866},
+  {section:'work',  name:'Weed Hunty',                                usage:'草刈',           spec:'',                         price:850000,  cost:587000},
+  {section:'work',  name:'Herbi Striky',                              usage:'除草',           spec:'※散布機稼働用バッテリー（別売）', price:900000, cost:613927},
+  {section:'option',name:'Autodrive Field',                           usage:'屋外自動走行',   spec:'GNSS-RTK',                 price:980000,  cost:455604},
+  {section:'option',name:'Autodrive Greenhouse',                      usage:'屋内自動走行',   spec:'LiDAR＋SLAM',              price:null, priceText:'12月発売開始予定', cost:null},
+  {section:'option',name:'Bumper Sensor',                             usage:'安全装備',       spec:'',                         price:120000,  cost:79750},
+  {section:'option',name:'Front Side Guard',                          usage:'調整器具',       spec:'※運搬仕様は標準装備',       price:50000,   cost:24339},
+  {section:'option',name:'Spray Pipe Width Adjustment Bracket',       usage:'噴管幅調整金具', spec:'カードジェッター取付器具',   price:12650,   cost:11500},
+  {section:'option',name:'Spare Battery',                             usage:'交換用バッテリー', spec:'',                       price:150000,  cost:89100},
+  {section:'other', name:'Annual GPS Communication Cost',             usage:'年間GPS通信費用', spec:'GNSS-RTK',                price:40000,   cost:36000}
+];
+var mmPriceList=null, mmPriceSource='', mmPriceError='';
+function mmNum(v){
+  if(typeof v==='number')return isFinite(v)?v:null;
+  var t=String(v==null?'':v).replace(/[¥￥,\s円]/g,'');
+  if(!t||!/^-?\d+(\.\d+)?$/.test(t))return null;
+  return Number(t);
+}
+function mmKeyOf(name){return String(name||'').toLowerCase().replace(/[\s　\-_（）()．.]/g,'');}
+function mmSectionOf(text){
+  var t=String(text||'');
+  if(/本体/.test(t))return 'body';
+  if(/アタッチメント/.test(t))return 'work';
+  if(/パッケージ/.test(t))return 'package';
+  if(/オプション/.test(t))return 'option';
+  if(/その他/.test(t))return 'other';
+  return '';
+}
+function mmGroupOf(it){
+  if(it.section==='body')return 'body';
+  if(it.section==='work')return 'work';
+  var t=(it.name+' '+it.usage+' '+it.spec).toLowerCase();
+  if(it.section==='option'&&(/自動走行/.test(t)||/autodrive/.test(t)))return 'system';
+  return 'other';
+}
+function mmFinishItem(it){
+  it.key=mmKeyOf(it.name);
+  it.group=mmGroupOf(it);
+  it.provisional=(it.price==null)&&!!(it.priceText&&String(it.priceText).trim());
+  return it;
+}
+// シートの行配列（values.get の結果）→ 商品配列。①本体/②アタッチメント/③オプション/⑤その他費用を拾い、④パッケージは飛ばす（本体＋ワークの合計と同額のため）。
+function parseMmPriceRows(rows){
+  var items=[],section='',priceCol=-1,costCol=-1;
+  (rows||[]).forEach(function(r){
+    r=r||[];
+    var a=String(r[0]==null?'':r[0]).trim();
+    var joined=r.map(function(x){return String(x==null?'':x);}).join(' ');
+    // セクション見出し（①本体価格 / ②アタッチメント価格 / ③オプション / ④パッケージ価格 / ⑤その他費用）
+    if(/[①②③④⑤]/.test(joined)&&mmSectionOf(joined)){section=mmSectionOf(joined);priceCol=-1;costCol=-1;return;}
+    // 列見出し行（「商品名」「オプション」「パッケージ」で始まり「価格」を含む）
+    if(/^(商品名|オプション|パッケージ)/.test(a)&&/価格/.test(joined)){
+      priceCol=-1;costCol=-1;
+      for(var i=0;i<r.length;i++){var c=String(r[i]==null?'':r[i]);if(priceCol<0&&/価格/.test(c)&&!/代理店/.test(c))priceCol=i;if(costCol<0&&/原価/.test(c))costCol=i;}
+      if(priceCol<0)priceCol=3;
+      return;
+    }
+    if(!section||section==='package'||priceCol<0)return;
+    if(!a||/^※/.test(a)||/ラインナップ/.test(a))return;
+    var priceRaw=r[priceCol],cost=costCol>=0?mmNum(r[costCol]):null,price=mmNum(priceRaw);
+    if(price==null&&!(priceRaw&&String(priceRaw).trim()))return; // 価格セルが空＝商品行ではない
+    items.push(mmFinishItem({section:section,name:a,usage:String(r[1]==null?'':r[1]).trim(),spec:String(r[2]==null?'':r[2]).trim(),price:price,priceText:price==null?String(priceRaw).trim():'',cost:cost}));
+  });
+  return items;
+}
+async function loadMmPriceList(force){
+  if(mmPriceList&&!force)return mmPriceList;
+  mmPriceError='';
+  try{
+    var tab=MM_PRICE_TAB;
+    try{
+      var meta=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+MM_PRICE_SHEET_ID+'?fields=sheets.properties.title');
+      var titles=(meta.sheets||[]).map(function(x){return x.properties.title;});
+      if(titles.indexOf(tab)===-1){var cand=titles.filter(function(t){return t.indexOf(MM_PRICE_TAB)!==-1;});if(cand.length)tab=cand[0];}
+    }catch(e){/* メタが読めなくても値の取得を試す */}
+    var v=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+MM_PRICE_SHEET_ID+'/values/'+encodeURIComponent("'"+tab+"'!A1:N80")+'?valueRenderOption=UNFORMATTED_VALUE');
+    var items=parseMmPriceRows(v.values||[]);
+    if(!items.some(function(x){return x.section==='body';})||items.length<5)throw new Error('価格表の形式を読み取れませんでした（'+items.length+'件）');
+    mmPriceList=items;mmPriceSource='sheet:'+tab;
+  }catch(e){
+    console.warn('MM price sheet fallback:',e);
+    mmPriceError=(e&&e.message)||String(e);
+    mmPriceList=MM_PRICE_FALLBACK.map(function(x){return mmFinishItem(Object.assign({},x));});
+    mmPriceSource='fallback';
+  }
+  return mmPriceList;
+}
+// 案件の原価合計（明細の 数量×原価）。原価未入力の行があれば known=false を添える。
+function dealCost(d){
+  var li=parseDealLineItems(d&&d.lineItems),cost=0,known=li.length>0,any=false;
+  li.forEach(function(x){
+    var q=Number(x.qty)||0,c=(x.cost===''||x.cost==null)?null:Number(x.cost);
+    if(c==null||isNaN(c)){if(q&&(Number(x.unitPrice)||0))known=false;return;}
+    any=true;cost+=q*c;
+  });
+  return {cost:cost,known:known&&any,any:any};
+}
+function dealSales(d){var li=parseDealLineItems(d&&d.lineItems),t=0;li.forEach(function(x){t+=(Number(x.qty)||0)*(Number(x.unitPrice)||0);});return t||Number(d&&d.amount)||0;}
+function pct(num,den){if(!den)return '—';return Math.round(num/den*1000)/10+'%';}
 var ACTIVITY_TYPES=[
   {key:'visit',label:'訪問',icon:'\u{1F6B6}'},
   {key:'call',label:'電話',icon:'\u{1F4DE}'},
@@ -2553,20 +2667,22 @@ function renderLineItemRows(items){
   if(!items.length)items=[{name:'',desc:'',qty:'',unit:'月',unitPrice:'',taxRate:10}];
   for(var i=0;i<items.length;i++){
     var it=items[i];
-    h+='<div class="line-item-row" data-idx="'+i+'" style="background:#f5f9f7;border-radius:10px;padding:10px;margin-bottom:8px">';
+    h+='<div class="line-item-row" data-idx="'+i+'" data-mmkey="'+escapeAttr(it.mmKey||'')+'" data-listprice="'+escapeAttr(it.listPrice==null?'':it.listPrice)+'" data-margin="'+escapeAttr(it.margin==null?'':it.margin)+'" data-provisional="'+(it.provisional?'1':'')+'" style="background:#f5f9f7;border-radius:10px;padding:10px;margin-bottom:8px'+(it.mmKey?';border-left:3px solid #1a6b4a':'')+'">';
     h+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">';
     h+='<span style="font-size:.75em;font-weight:700;color:#5a7a6a;min-width:24px">'+(i+1)+'.</span>';
     h+='<input class="form-input li-name" placeholder="商品名・摘要" value="'+escapeAttr(it.name||'')+'" style="flex:1;padding:6px 10px;font-size:.85em">';
     h+='<button type="button" class="btn-icon" onclick="removeLineItemRow('+i+')" style="color:#c0392b;font-size:.9em" title="削除">&#10005;</button>';
     h+='</div>';
-    h+='<div style="display:grid;grid-template-columns:1fr 70px 1fr 60px;gap:6px;margin-bottom:4px">';
+    h+='<div style="display:grid;grid-template-columns:1fr 70px 1fr 1fr 60px;gap:6px;margin-bottom:4px">';
     h+='<input class="form-input li-qty" type="number" step="any" placeholder="数量" value="'+(it.qty||'')+'" style="padding:6px 10px;font-size:.85em">';
     h+='<select class="form-input li-unit" style="padding:4px 6px;font-size:.8em">';
     LINE_ITEM_UNITS.forEach(function(u){h+='<option value="'+u+'"'+((it.unit||'式')===u?' selected':'')+'>'+u+'</option>';});
     h+='</select>';
     h+='<input class="form-input li-price" type="number" step="any" placeholder="単価" value="'+(it.unitPrice||'')+'" style="padding:6px 10px;font-size:.85em">';
+    h+='<input class="form-input li-cost" type="number" step="any" placeholder="原価(社内)" title="1単位あたりの原価。帳票には出ません。利益額・利益率の計算に使います" value="'+(it.cost==null?'':it.cost)+'" style="padding:6px 10px;font-size:.85em;background:#fffbe6">';
     h+='<select class="form-input li-tax" style="padding:4px 6px;font-size:.8em"><option value="10"'+(String(it.taxRate)==='8'?'':' selected')+'>10%</option><option value="8"'+(String(it.taxRate)==='8'?' selected':'')+'>8%※</option></select>';
     h+='</div>';
+    if(it.mmKey){var lp=Number(it.listPrice)||0,mg=Number(it.margin)||0;h+='<div style="font-size:.72em;color:#1a6b4a;margin-bottom:4px">MM価格表'+(lp?'：定価 '+lp.toLocaleString('ja-JP')+'円':'')+(mg?'／代理店マージン '+mg+'%':'／直販')+(it.provisional?'／<b style="color:#b45309">仮価格</b>':'')+'</div>';}
     h+='<input class="form-input li-desc" placeholder="備考（任意）" value="'+escapeAttr(it.desc||'')+'" style="padding:6px 10px;font-size:.8em;color:#5a7a6a">';
     h+='</div>';
   }
@@ -2594,7 +2710,11 @@ function collectLineItems(){
     var unit=(row.querySelector('.li-unit')||{}).value||'';
     var unitPrice=(row.querySelector('.li-price')||{}).value||'';
     var taxRate=(row.querySelector('.li-tax')||{}).value||'10';
-    items.push({name:name.trim(),desc:desc.trim(),qty:qty,unit:unit,unitPrice:unitPrice,taxRate:Number(taxRate)});
+    var cost=(row.querySelector('.li-cost')||{}).value;
+    var it={name:name.trim(),desc:desc.trim(),qty:qty,unit:unit,unitPrice:unitPrice,taxRate:Number(taxRate)};
+    if(cost!==''&&cost!=null&&cost!==undefined)it.cost=Number(cost);
+    if(row.dataset.mmkey){it.mmKey=row.dataset.mmkey;if(row.dataset.listprice!=='')it.listPrice=Number(row.dataset.listprice);if(row.dataset.margin!=='')it.margin=Number(row.dataset.margin);if(row.dataset.provisional==='1')it.provisional=true;}
+    items.push(it);
   });
   return items;
 }
@@ -2613,6 +2733,93 @@ function rebuildDealStatusOptions(){
   var p=document.getElementById('f-product'),st=document.getElementById('f-status');
   if(!p||!st)return;
   st.innerHTML=buildStatusOptionsHtml(p.value,st.value);
+  toggleMmWizard();
+}
+// ---- MM構成ウィザード（販売方法／ワーク／システム／その他 をチェック → 明細を自動作成） ----
+function toggleMmWizard(){
+  var p=document.getElementById('f-product'),w=document.getElementById('mm-wizard');
+  if(!p||!w)return;
+  if(p.value!=='Mobile Mover'){w.style.display='none';return;}
+  w.style.display='';
+  if(!w.dataset.ready){w.innerHTML='<div style="font-size:.85em;color:#5a7a6a;padding:6px 0">価格表を読み込み中…</div>';loadMmPriceList().then(function(){w.dataset.ready='1';renderMmWizard();});}
+}
+function mmWizardStateFromLines(items){
+  var st={mode:'direct',margin:MM_DEFAULT_MARGIN,units:1,selected:{},provPrice:{}};
+  var mm=(items||[]).filter(function(x){return x.mmKey;});
+  if(!mm.length)return st;
+  var mg=mm.map(function(x){return Number(x.margin)||0;}).filter(function(x){return x>0;})[0];
+  if(mg){st.mode='dealer';st.margin=mg;}
+  mm.forEach(function(x){st.selected[x.mmKey]=true;if(x.provisional)st.provPrice[x.mmKey]=Number(x.unitPrice)||'';});
+  var body=mm.filter(function(x){return (x.unit||'')==='台';})[0];
+  if(body&&Number(body.qty))st.units=Number(body.qty);
+  return st;
+}
+function renderMmWizard(){
+  var w=document.getElementById('mm-wizard');if(!w)return;
+  var list=mmPriceList||[];
+  var st=mmWizardStateFromLines(collectLineItems());
+  var groups=[{g:'work',label:'ワーク（アタッチメント）'},{g:'system',label:'システム'},{g:'other',label:'その他（オプション）'}];
+  var h='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px">';
+  h+='<div style="font-weight:700;color:#1a6b4a;font-size:.9em">🚜 Mobile Mover 構成から明細を作る</div>';
+  h+='<div style="font-size:.72em;color:#5a7a6a">価格表：'+(mmPriceSource==='fallback'?'<span style="color:#b45309">シートを読めないため内蔵の写し（'+MM_PRICE_FALLBACK_DATE+'時点）</span>':'シート「'+escapeHtml(mmPriceSource.replace('sheet:',''))+'」')+' <a href="https://docs.google.com/spreadsheets/d/'+MM_PRICE_SHEET_ID+'" target="_blank" rel="noopener" style="color:#1a6b4a">開く</a> <button type="button" class="btn-text" onclick="loadMmPriceList(true).then(renderMmWizard)" style="font-size:1em;padding:0 4px">再読込</button></div></div>';
+  // 販売方法・台数
+  h+='<div style="display:grid;grid-template-columns:auto auto 1fr;gap:8px 14px;align-items:center;margin-bottom:8px;font-size:.85em">';
+  h+='<label style="margin:0;font-weight:600">販売方法</label><div style="display:flex;gap:10px;flex-wrap:wrap"><label style="margin:0;font-weight:400"><input type="radio" name="mm-mode" value="direct"'+(st.mode==='direct'?' checked':'')+' onchange="mmWizardModeChanged()" style="width:auto;margin-right:4px">直販（定価）</label><label style="margin:0;font-weight:400"><input type="radio" name="mm-mode" value="dealer"'+(st.mode==='dealer'?' checked':'')+' onchange="mmWizardModeChanged()" style="width:auto;margin-right:4px">代理店販売</label></div>';
+  h+='<div style="display:flex;align-items:center;gap:6px"><span style="color:#5a7a6a">代理店マージン</span><input class="form-input" id="mm-margin" type="number" min="0" max="90" step="0.5" value="'+escapeAttr(st.margin)+'" style="width:70px;padding:4px 8px;font-size:.95em"'+(st.mode==='dealer'?'':' disabled')+'><span>%</span><span style="color:#8aa89a;font-size:.85em">（案件ごとに変更可）</span></div>';
+  h+='<label style="margin:0;font-weight:600">台数</label><div><input class="form-input" id="mm-units" type="number" min="1" step="1" value="'+escapeAttr(st.units)+'" style="width:70px;padding:4px 8px;font-size:.95em"> 台</div><div style="color:#8aa89a;font-size:.85em">本体＋選んだ構成が台数分の明細になります</div>';
+  h+='</div>';
+  var body=list.filter(function(x){return x.group==='body';})[0];
+  if(body)h+='<div style="font-size:.82em;margin-bottom:6px"><span style="font-weight:600">本体</span>：'+escapeHtml(body.name)+(body.usage?' '+escapeHtml(body.usage):'')+' — 定価 '+(body.price||0).toLocaleString('ja-JP')+'円'+(body.cost!=null?'（原価 '+body.cost.toLocaleString('ja-JP')+'円）':'')+'</div>';
+  groups.forEach(function(gr){
+    var its=list.filter(function(x){return x.group===gr.g;});if(!its.length)return;
+    h+='<div style="margin-bottom:6px"><div style="font-size:.78em;font-weight:600;color:#3a5a4a;margin-bottom:3px">'+gr.label+'</div><div style="display:flex;flex-direction:column;gap:3px">';
+    its.forEach(function(it){
+      var checked=!!st.selected[it.key];
+      h+='<label style="margin:0;font-weight:400;font-size:.82em;display:flex;align-items:center;gap:6px;flex-wrap:wrap"><input type="checkbox" class="mm-item" data-key="'+escapeAttr(it.key)+'"'+(checked?' checked':'')+' style="width:auto;margin:0">';
+      h+='<span>'+(it.usage?'<b>'+escapeHtml(it.usage)+'</b> ':'')+escapeHtml(it.name)+(it.spec?' <span style="color:#5a7a6a">'+escapeHtml(it.spec)+'</span>':'')+'</span>';
+      if(it.provisional){
+        var pv=st.provPrice[it.key];if(pv===undefined||pv===''){var ref=list.filter(function(x){return x.group==='system'&&x.price;})[0];pv=ref?ref.price:'';}
+        h+='<span style="color:#b45309;font-size:.9em">仮価格</span><input class="form-input mm-prov" data-key="'+escapeAttr(it.key)+'" type="number" step="any" value="'+escapeAttr(pv)+'" style="width:110px;padding:3px 8px;font-size:.95em;background:#fff7e6"><span style="color:#8aa89a;font-size:.85em">円（シート：'+escapeHtml(it.priceText)+'）</span>';
+      }else{
+        h+='<span style="color:#5a7a6a;font-size:.9em">定価 '+(it.price||0).toLocaleString('ja-JP')+'円'+(it.cost!=null?'／原価 '+it.cost.toLocaleString('ja-JP')+'円':'')+'</span>';
+      }
+      h+='</label>';
+    });
+    h+='</div></div>';
+  });
+  h+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px"><button type="button" class="btn-primary" onclick="applyMmWizard()" style="padding:8px 14px;font-size:.85em;width:auto">明細に反映</button><span style="font-size:.75em;color:#5a7a6a">原価・利益はChoreia内のみ。見積書には商品名・数量・単価だけが載ります。</span></div>';
+  w.innerHTML=h;
+}
+function mmWizardModeChanged(){
+  var m=(document.querySelector('input[name="mm-mode"]:checked')||{}).value||'direct';
+  var mg=document.getElementById('mm-margin');if(mg)mg.disabled=(m!=='dealer');
+}
+function applyMmWizard(){
+  var list=mmPriceList||[];
+  var mode=(document.querySelector('input[name="mm-mode"]:checked')||{}).value||'direct';
+  var margin=mode==='dealer'?(Number((document.getElementById('mm-margin')||{}).value)||0):0;
+  var units=Math.max(1,Math.round(Number((document.getElementById('mm-units')||{}).value)||1));
+  var sel={};Array.prototype.forEach.call(document.querySelectorAll('.mm-item'),function(c){if(c.checked)sel[c.dataset.key]=true;});
+  var prov={};Array.prototype.forEach.call(document.querySelectorAll('.mm-prov'),function(i){prov[i.dataset.key]=Number(i.value)||0;});
+  function priceOf(it){var base=it.provisional?(prov[it.key]||0):(it.price||0);return Math.round(base*(1-margin/100));}
+  var gen=[];
+  var body=list.filter(function(x){return x.group==='body';})[0];
+  if(body)gen.push({name:body.name+(body.usage?' '+body.usage:''),desc:'本体'+(body.spec?' '+body.spec:'')+(margin?'（代理店価格）':''),qty:units,unit:'台',unitPrice:priceOf(body),taxRate:10,cost:body.cost==null?'':body.cost,mmKey:body.key,listPrice:body.price==null?'':body.price,margin:margin});
+  ['work','system','other'].forEach(function(g){
+    list.filter(function(x){return x.group===g&&sel[x.key];}).forEach(function(it){
+      var d=[it.usage,it.spec].filter(Boolean).join('／');
+      if(it.provisional)d=(d?d+' ':'')+'※仮価格（正式価格は発売時に確定）';
+      gen.push({name:it.name,desc:d,qty:units,unit:it.group==='other'&&/年/.test(it.usage)?'年':'式',unitPrice:priceOf(it),taxRate:10,cost:it.cost==null?'':it.cost,mmKey:it.key,listPrice:it.price==null?'':it.price,margin:margin,provisional:!!it.provisional});
+    });
+  });
+  var keep=collectLineItems().filter(function(x){return !x.mmKey&&x.name;});
+  var c=document.getElementById('line-items-container');
+  c.innerHTML=renderLineItemRows(gen.concat(keep));
+  var total=0;gen.concat(keep).forEach(function(x){total+=(Number(x.qty)||0)*(Number(x.unitPrice)||0);});
+  var cost=0,unknown=false;gen.concat(keep).forEach(function(x){if(x.cost===''||x.cost==null){if(Number(x.unitPrice))unknown=true;return;}cost+=(Number(x.qty)||0)*Number(x.cost);});
+  showToast('明細 '+gen.length+'行を作成：売上 '+total.toLocaleString('ja-JP')+'円／原価 '+cost.toLocaleString('ja-JP')+'円'+(unknown?'（原価未定の行あり）':'／粗利 '+(total-cost).toLocaleString('ja-JP')+'円 '+pct(total-cost,total)));
+  var amt=document.getElementById('f-amount');if(amt&&total)amt.value=total;
+  c.scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 function showDealForm(editId,preCustomerId){
   var d=editId?deals.find(function(x){return x.id===editId}):null;
@@ -2640,6 +2847,8 @@ function showDealForm(editId,preCustomerId){
   h+='<div class="form-group"><label>開始日</label><input class="form-input" id="f-startdate" type="date" value="'+escapeAttr(d?d.startDate:todayStr())+'"></div>';
   h+='<div class="form-group"><label>期限</label><input class="form-input" id="f-deadline" type="date" value="'+escapeAttr(d?d.deadline:'')+'"></div></div>';
   h+='<div class="form-group"><label>メモ</label><textarea class="form-input" id="f-dealmemo">'+escapeHtml(d?d.memo:'')+'</textarea></div>';
+  // MM構成ウィザード（商材=Mobile Mover のときだけ表示）
+  h+='<div id="mm-wizard" style="display:none;background:#eef6f1;border:1px solid #cfe3d8;border-radius:12px;padding:12px;margin-bottom:12px"></div>';
   // Line items
   var items=(d&&d.lineItems)?parseDealLineItems(d.lineItems):[];
   h+='<div class="form-group"><label>明細</label>';
@@ -2651,6 +2860,7 @@ function showDealForm(editId,preCustomerId){
   h+='<button class="btn-primary" type="submit">'+(d?'更新':'登録')+'</button></form>';
   document.getElementById('modal-body').innerHTML=h;
   openModal();
+  toggleMmWizard();
 }
 
 async function saveDeal(e,editId){
@@ -2711,21 +2921,30 @@ function showDealDetail(id){
   // Line items display
   var li=parseDealLineItems(d.lineItems);
   if(li.length){
-    h+='<div style="margin-bottom:16px"><label style="font-size:.8em;font-weight:600;color:#3a5a4a;display:block;margin-bottom:6px">明細</label>';
-    h+='<table style="width:100%;border-collapse:collapse;font-size:.8em"><tr style="background:#f0f5f2"><th style="padding:4px 8px;text-align:left">商品名</th><th style="padding:4px 8px;text-align:right">数量</th><th style="padding:4px 8px">単位</th><th style="padding:4px 8px;text-align:right">単価</th><th style="padding:4px 8px;text-align:right">金額</th><th style="padding:4px 8px;text-align:right">税</th></tr>';
-    var subTotal=0;
+    var hasCost=li.some(function(x){return x.cost!==''&&x.cost!=null&&!isNaN(Number(x.cost));});
+    var mmLine=li.filter(function(x){return x.mmKey;})[0];
+    h+='<div style="margin-bottom:16px"><label style="font-size:.8em;font-weight:600;color:#3a5a4a;display:block;margin-bottom:6px">明細'+(hasCost?' <span style="font-weight:400;color:#8aa89a">（原価・粗利は社内用。帳票には出ません）</span>':'')+'</label>';
+    if(mmLine)h+='<div style="font-size:.78em;color:#1a6b4a;margin-bottom:6px">🚜 MM構成：'+((Number(mmLine.margin)||0)?'代理店販売（マージン '+mmLine.margin+'%）':'直販（定価）')+(li.some(function(x){return x.provisional;})?'　<b style="color:#b45309">仮価格の行あり</b>':'')+'</div>';
+    h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.8em"><tr style="background:#f0f5f2"><th style="padding:4px 8px;text-align:left">商品名</th><th style="padding:4px 8px;text-align:right">数量</th><th style="padding:4px 8px">単位</th><th style="padding:4px 8px;text-align:right">単価</th><th style="padding:4px 8px;text-align:right">金額</th>'+(hasCost?'<th style="padding:4px 8px;text-align:right;background:#fff8e6">原価</th><th style="padding:4px 8px;text-align:right;background:#fff8e6">粗利</th>':'')+'<th style="padding:4px 8px">税率</th></tr>';
+    var subTotal=0,costTotal=0,costUnknown=false;
     li.forEach(function(x,i){
       var amt=(Number(x.qty)||0)*(Number(x.unitPrice)||0);
       subTotal+=amt;
-      h+='<tr style="border-bottom:1px solid #e8f0ec"><td style="padding:4px 8px">'+escapeHtml(x.name)+(x.desc?'<div style="color:#5a7a6a;font-size:.9em">'+escapeHtml(x.desc)+'</div>':'')+'</td>';
+      var hasC=x.cost!==''&&x.cost!=null&&!isNaN(Number(x.cost));
+      var c=hasC?(Number(x.qty)||0)*Number(x.cost):null;
+      if(hasC)costTotal+=c;else if(amt)costUnknown=true;
+      h+='<tr style="border-bottom:1px solid #e8f0ec"><td style="padding:4px 8px">'+escapeHtml(x.name)+(x.provisional?' <span style="color:#b45309;font-size:.85em">仮価格</span>':'')+(x.desc?'<div style="color:#5a7a6a;font-size:.9em">'+escapeHtml(x.desc)+'</div>':'')+'</td>';
       h+='<td style="padding:4px 8px;text-align:right">'+escapeHtml(x.qty||'')+'</td>';
       h+='<td style="padding:4px 8px;text-align:center">'+escapeHtml(x.unit||'')+'</td>';
       h+='<td style="padding:4px 8px;text-align:right">'+(x.unitPrice?Number(x.unitPrice).toLocaleString('ja-JP'):'')+'</td>';
       h+='<td style="padding:4px 8px;text-align:right;font-weight:600">'+(amt?amt.toLocaleString('ja-JP'):'')+'</td>';
+      if(hasCost)h+='<td style="padding:4px 8px;text-align:right;background:#fffdf3">'+(hasC?c.toLocaleString('ja-JP'):'<span style="color:#b45309">未入力</span>')+'</td><td style="padding:4px 8px;text-align:right;background:#fffdf3">'+(hasC?(amt-c).toLocaleString('ja-JP')+' <span style="color:#5a7a6a;font-size:.85em">'+pct(amt-c,amt)+'</span>':'—')+'</td>';
       h+='<td style="padding:4px 8px;text-align:right">'+x.taxRate+'%</td></tr>';
     });
-    h+='<tr style="border-top:2px solid #d0ddd6"><td colspan="4" style="padding:4px 8px;text-align:right;font-weight:600">小計</td><td style="padding:4px 8px;text-align:right;font-weight:700">'+subTotal.toLocaleString('ja-JP')+'円</td><td></td></tr>';
-    h+='</table></div>';
+    h+='<tr style="border-top:2px solid #d0ddd6"><td colspan="4" style="padding:4px 8px;text-align:right;font-weight:600">小計</td><td style="padding:4px 8px;text-align:right;font-weight:700">'+subTotal.toLocaleString('ja-JP')+'円</td>';
+    if(hasCost)h+='<td style="padding:4px 8px;text-align:right;font-weight:700;background:#fff8e6">'+costTotal.toLocaleString('ja-JP')+'円'+(costUnknown?'<div style="color:#b45309;font-size:.8em;font-weight:400">未入力あり</div>':'')+'</td><td style="padding:4px 8px;text-align:right;font-weight:700;background:#fff8e6">'+(subTotal-costTotal).toLocaleString('ja-JP')+'円<div style="font-size:.85em;font-weight:600;color:#1a6b4a">利益率 '+pct(subTotal-costTotal,subTotal)+(costUnknown?'（暫定）':'')+'</div></td>';
+    h+='<td></td></tr>';
+    h+='</table></div></div>';
   }
 
   // Status change buttons
@@ -3097,15 +3316,19 @@ function drawReport(){
   mmGoals.filter(function(g){return g.month===m;}).forEach(function(g){rosterAdd(persons,g.assignee);});
   reportPersons=persons;
 
-  var rows=[],totTU=0,totFU=0,totAU=0,totTS=0,totAS=0;
+  var rows=[],totTU=0,totFU=0,totAU=0,totTS=0,totAS=0,totC=0,totG=0,totUnk=0,totSy=0,totCy=0;
   persons.forEach(function(p,i){
     var g=mmGoals.find(function(x){return x.month===m&&x.assignee===p;})||{};
     var tU=Number(g.targetUnits)||0,tS=Number(g.targetSales)||0,fU=Number(g.forecastUnits)||0;
     var pWon=wonDeals.filter(function(d){return normalizeAssignee(d.assignee)===p;});
     var aU=pWon.reduce(function(s,d){return s+(dealUnits(d)||1);},0);
-    var aS=Math.round(pWon.reduce(function(s,d){return s+(Number(d.amount)||0);},0)/10000);
-    totTU+=tU;totFU+=fU;totAU+=aU;totTS+=tS;totAS+=aS;
-    rows.push({p:p,i:i,tU:(g.targetUnits||''),fU:(g.forecastUnits||''),tS:(g.targetSales||''),aU:aU,aS:aS});
+    var aSy=pWon.reduce(function(s,d){return s+(Number(d.amount)||0);},0);
+    var aS=Math.round(aSy/10000);
+    // 原価・粗利（明細の 数量×原価。原価未入力の案件は件数を添える）
+    var aCy=0,unk=0;pWon.forEach(function(d){var dc=dealCost(d);aCy+=dc.cost;if(!dc.known)unk++;});
+    var aC=Math.round(aCy/10000),aG=Math.round((aSy-aCy)/10000);
+    totTU+=tU;totFU+=fU;totAU+=aU;totTS+=tS;totAS+=aS;totC+=aC;totG+=aG;totUnk+=unk;totSy+=aSy;totCy+=aCy;
+    rows.push({p:p,i:i,tU:(g.targetUnits||''),fU:(g.forecastUnits||''),tS:(g.targetSales||''),aU:aU,aS:aS,aC:aC,aG:aG,gr:pct(aSy-aCy,aSy),unk:unk});
   });
 
   var activeKeys=['lead','first','demo','proposal','negotiation','review'];
@@ -3127,32 +3350,36 @@ function drawReport(){
   h+='<div class="rep-kpis">';
   h+='<div class="rep-kpi"><div class="lab">受注台数</div><div class="big">'+totAU+'<small> / '+totTU+' 台</small></div><div class="bar"><i style="width:'+(totTU?Math.min(100,Math.round(totAU/totTU*100)):0)+'%"></i></div></div>';
   h+='<div class="rep-kpi"><div class="lab">実績売上</div><div class="big">'+totAS.toLocaleString()+'<small> / '+totTS.toLocaleString()+' 万</small></div><div class="bar"><i style="width:'+(totTS?Math.min(100,Math.round(totAS/totTS*100)):0)+'%"></i></div></div>';
+  h+='<div class="rep-kpi"><div class="lab">粗利（利益額）</div><div class="big">'+totG.toLocaleString()+'<small> 万／利益率 '+pct(totSy-totCy,totSy)+'</small></div>'+(totUnk?'<div style="font-size:.72em;color:#b45309">原価未入力 '+totUnk+'件</div>':'')+'</div>';
   h+='<div class="rep-kpi"><div class="lab">商談中（パイプライン）</div><div class="big">'+pipeline+'<small> 件</small></div></div>';
   h+='<div class="rep-kpi"><div class="lab">今月の活動</div><div class="big">'+monthActs+'<small> 件</small></div></div>';
   h+='</div>';
-  h+='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>担当</th><th class="rep-num">目標台数</th><th class="rep-num">見込台数</th><th class="rep-num">受注台数</th><th class="rep-num">達成率</th><th class="rep-num">目標売上(万)</th><th class="rep-num">実績売上(万)</th><th class="rep-num">達成率</th></tr></thead><tbody>';
+  h+='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>担当</th><th class="rep-num">目標台数</th><th class="rep-num">見込台数</th><th class="rep-num">受注台数</th><th class="rep-num">達成率</th><th class="rep-num">目標売上(万)</th><th class="rep-num">実績売上(万)</th><th class="rep-num">達成率</th><th class="rep-num" style="background:#fff8e6">原価(万)</th><th class="rep-num" style="background:#fff8e6">利益額(万)</th><th class="rep-num" style="background:#fff8e6">利益率</th></tr></thead><tbody>';
   rows.forEach(function(r){
     h+='<tr><td>'+escapeHtml(r.p)+'</td>';
     h+='<td class="rep-num"><input class="rep-goal" id="goal-u-'+r.i+'" type="number" min="0" value="'+escapeAttr(r.tU)+'" onchange="saveGoalRow('+r.i+')"></td>';
     h+='<td class="rep-num"><input class="rep-goal" id="goal-f-'+r.i+'" type="number" min="0" value="'+escapeAttr(r.fU)+'" onchange="saveGoalRow('+r.i+')"></td>';
     h+='<td class="rep-num">'+r.aU+'</td><td class="rep-num">'+rateCell(r.aU,Number(r.tU)||0)+'</td>';
     h+='<td class="rep-num"><input class="rep-goal" id="goal-s-'+r.i+'" type="number" min="0" value="'+escapeAttr(r.tS)+'" onchange="saveGoalRow('+r.i+')"></td>';
-    h+='<td class="rep-num">'+r.aS.toLocaleString()+'</td><td class="rep-num">'+rateCell(r.aS,Number(r.tS)||0)+'</td></tr>';
+    h+='<td class="rep-num">'+r.aS.toLocaleString()+'</td><td class="rep-num">'+rateCell(r.aS,Number(r.tS)||0)+'</td>';
+    h+='<td class="rep-num" style="background:#fffdf3">'+r.aC.toLocaleString()+(r.unk?'<div style="font-size:.7em;color:#b45309">未入力'+r.unk+'件</div>':'')+'</td><td class="rep-num" style="background:#fffdf3">'+r.aG.toLocaleString()+'</td><td class="rep-num" style="background:#fffdf3">'+r.gr+'</td></tr>';
   });
-  h+='<tr class="rep-tot"><td>チーム合計</td><td class="rep-num">'+totTU+'</td><td class="rep-num">'+totFU+'</td><td class="rep-num">'+totAU+'</td><td class="rep-num">'+rateCell(totAU,totTU)+'</td><td class="rep-num">'+totTS.toLocaleString()+'</td><td class="rep-num">'+totAS.toLocaleString()+'</td><td class="rep-num">'+rateCell(totAS,totTS)+'</td></tr>';
+  h+='<tr class="rep-tot"><td>チーム合計</td><td class="rep-num">'+totTU+'</td><td class="rep-num">'+totFU+'</td><td class="rep-num">'+totAU+'</td><td class="rep-num">'+rateCell(totAU,totTU)+'</td><td class="rep-num">'+totTS.toLocaleString()+'</td><td class="rep-num">'+totAS.toLocaleString()+'</td><td class="rep-num">'+rateCell(totAS,totTS)+'</td><td class="rep-num" style="background:#fff8e6">'+totC.toLocaleString()+'</td><td class="rep-num" style="background:#fff8e6">'+totG.toLocaleString()+'</td><td class="rep-num" style="background:#fff8e6">'+pct(totSy-totCy,totSy)+'</td></tr>';
   h+='</tbody></table></div>';
-  h+='<div class="rep-note">※ 黄色セル（目標台数／見込台数／目標売上）は各担当が月初に入力（変更すると自動保存）。受注台数＝受注案件の明細(単位:台)合計（明細が無い受注案件は1台として計上）。実績売上・達成率・合計は自動集計。</div></div>';
+  h+='<div class="rep-note">※ 黄色セル（目標台数／見込台数／目標売上）は各担当が月初に入力（変更すると自動保存）。受注台数＝受注案件の明細(単位:台)合計（明細が無い受注案件は1台として計上）。実績売上・達成率・合計は自動集計。</div>　原価・利益額・利益率＝受注案件の明細（数量×原価）から自動集計。原価はMM構成ウィザードが価格表から入れるほか、明細行の「原価(社内)」に手入力できる（他商材も同じ）。原価未入力の案件は原価0として計算し件数を注記。</div>';
 
   // 2. 案件一覧
   var listDeals=mmDeals.filter(dealInMonth);
   listDeals.sort(function(a,b){return String(repDate(a)).localeCompare(String(repDate(b)));});
-  h+='<div class="card"><h2>2. 案件一覧・活動（当月）</h2><div style="overflow-x:auto"><table class="data-table"><thead><tr><th>日付</th><th>顧客名</th><th>所在地</th><th>担当</th><th class="rep-num">台数</th><th>フェーズ</th><th>次アクション</th><th>備考</th></tr></thead><tbody>';
-  if(!listDeals.length)h+='<tr><td colspan="8" style="text-align:center;color:#8aa89a;padding:18px">当月の対象案件はありません</td></tr>';
+  h+='<div class="card"><h2>2. 案件一覧・活動（当月）</h2><div style="overflow-x:auto"><table class="data-table"><thead><tr><th>日付</th><th>顧客名</th><th>所在地</th><th>担当</th><th class="rep-num">台数</th><th class="rep-num" style="background:#fff8e6">粗利(万)</th><th>フェーズ</th><th>次アクション</th><th>備考</th></tr></thead><tbody>';
+  if(!listDeals.length)h+='<tr><td colspan="9" style="text-align:center;color:#8aa89a;padding:18px">当月の対象案件はありません</td></tr>';
   listDeals.forEach(function(d){
     var c=custById[d.customerId]||{};var la=latestAct(d.id);var na=la?la.content:'';var u=dealUnits(d);
     h+='<tr onclick="showDealDetail(\''+escapeAttr(d.id)+'\')" style="cursor:pointer">';
     h+='<td>'+escapeHtml(formatDate(repDate(d)))+'</td><td>'+escapeHtml(d.company)+'</td><td>'+escapeHtml(c.prefecture||'')+'</td><td>'+escapeHtml(normalizeAssignee(d.assignee))+'</td>';
     h+='<td class="rep-num">'+(u||(WON_STATUS_KEYS.indexOf(d.status)!==-1?1:''))+'</td>';
+    var dcx=dealCost(d),dsx=dealSales(d);
+    h+='<td class="rep-num" style="background:#fffdf3">'+(dcx.any?Math.round((dsx-dcx.cost)/10000).toLocaleString()+' <span style="color:#5a7a6a;font-size:.85em">'+pct(dsx-dcx.cost,dsx)+(dcx.known?'':'※')+'</span>':'<span style="color:#b8b8b8">—</span>')+'</td>';
     h+='<td><span class="status-badge '+d.status+'">'+getStatusLabel(d.status)+'</span></td>';
     h+='<td>'+escapeHtml(na.length>40?na.slice(0,40)+'…':na)+'</td><td>'+escapeHtml(d.memo||'')+'</td></tr>';
   });
