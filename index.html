@@ -2391,6 +2391,9 @@ function showCustomerDetail(id){
     });
   }else{h+='<p style="font-size:.85em;color:#5a7a6a">なし</p>';}
 
+  // MM 顧客要望（石井さん台帳）
+  h+='<h3 style="font-size:.9em;color:#1e4a75;margin:16px 0 8px">&#128161; 要望・ニーズ（MM台帳）</h3><div id="cust-needs"><div style="font-size:.8em;color:#8aa89a">台帳を読み込み中…</div></div>';
+
   // Gmail section
   if(c.email){
     h+='<div style="margin-top:16px"><h3 style="font-size:.9em;color:#1a6b4a;margin-bottom:8px">&#9993; メール履歴</h3>';
@@ -2415,6 +2418,7 @@ function showCustomerDetail(id){
   document.getElementById('detail-overlay').classList.add('active');
 
   // Load Gmail and Calendar async
+  fillNeedsBox('cust-needs',c.company,'');
   if(c.email)loadCustomerEmails(c.email);
   loadCustomerEvents(c.company,c.contact);
 }
@@ -3136,8 +3140,12 @@ function showActivityDetail(id){
   if(a.photoUrl){
     h+='<div style="margin-top:12px"><img src="'+escapeAttr(a.photoUrl)+'" style="max-width:100%;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.1)" onclick="window.open(this.src,\'_blank\')"></div>';
   }
+  if(a.company){
+    h+='<h3 style="font-size:.9em;color:#1e4a75;margin:16px 0 8px">&#128161; この日の要望（MM台帳）</h3><div id="act-needs"><div style="font-size:.8em;color:#8aa89a">台帳を読み込み中…</div></div>';
+  }
   document.getElementById('detail-content').innerHTML=h;
   document.getElementById('detail-overlay').classList.add('active');
+  if(a.company)fillNeedsBox('act-needs',a.company,needsDateKey(a.datetime));
 }
 
 function showEditActivityForm(id){
@@ -3174,6 +3182,8 @@ function showActivityForm(preCustomerId,preDealId,editId){
   h+='<div class="form-group" style="background:#fff8e6;border:1px solid #f0d98a;border-radius:10px;padding:10px 12px;margin-bottom:12px">';
   h+='<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;font-weight:600"><input type="checkbox" id="f-actflyer" style="width:auto;margin:0"'+(existing&&String(existing.flyerDistributed)==='1'?' checked':'')+'>&#129386; このお客様にチラシを配布した</label>';
   h+='<div style="font-size:.78em;color:#8a7a3a;margin-top:4px">配布先は上で選んだ顧客として記録され、活動量レポートの「チラシ配布」に集計されます。</div></div>';
+  // MM 顧客要望（石井さん台帳へ）
+  h+=needsFormSectionHtml(existing);
   // Photo
   h+='<div class="form-group"><label>写真</label>';
   h+='<input type="file" id="f-actphoto" accept="image/*" style="font-size:.85em">';
@@ -3184,6 +3194,9 @@ function showActivityForm(preCustomerId,preDealId,editId){
   h+='<button class="btn-primary" type="submit">'+(existing?'更新':'記録')+'</button></form>';
   document.getElementById('modal-body').innerHTML=h;
   openModal();
+  // 台帳を先読み（開発区分・対応状況の選択肢、編集時の登録済み要望の表示に使う）
+  if(existing)fillNeedsBox('needs-existing',existing.company,needsDateKey(existing.datetime)).then(function(){var el=document.getElementById('needs-existing');if(el&&el.innerHTML.indexOf('なし')!==-1)el.innerHTML='';else if(el&&el.innerHTML)el.insertAdjacentHTML('afterbegin','<div style="font-size:.78em;font-weight:700;color:#1e4a75;margin-bottom:4px">この日に登録済みの要望（変更は台帳で）</div>');});
+  else loadNeedsLedger().catch(function(){});
 }
 
 async function saveActivity(e,editId){
@@ -3194,6 +3207,9 @@ async function saveActivity(e,editId){
   var existing=editId?activities.find(function(x){return x.id===editId}):null;
   var flyerChecked=!!(document.getElementById('f-actflyer')&&document.getElementById('f-actflyer').checked);
   if(flyerChecked&&!custId){showToast('チラシ配布は配布先の顧客を選択してください');return;}
+  var needs=collectNeedBlocks();
+  if(needs.length&&!custId){showToast('要望を記録するには顧客を選択してください');return;}
+  if(needs.some(function(n){return !n.theme;})){showToast('要望の「テーマ」を入力してください');return;}
   var obj={
     id:editId||generateId(),
     customerId:custId,
@@ -3244,8 +3260,23 @@ async function saveActivity(e,editId){
     }else{
       activities.push(obj);await appendRow('活動',obj,ACTIVITY_FIELDS);
     }
-    closeModal();renderActivities();showToast(editId?'更新しました':'記録しました');
-  }catch(e){showToast('保存に失敗しました');console.error(e);}
+  }catch(e){showToast('保存に失敗しました');console.error(e);return;}
+  // 要望は活動の保存後に台帳へ（台帳側で失敗しても活動の記録は残す）
+  if(needs.length){
+    var btn=document.querySelector('#modal-body button[type=submit]');if(btn){btn.disabled=true;btn.textContent='要望を台帳に書き込み中…';}
+    try{
+      var added=await saveNeedsToLedger(needs,{date:(obj.datetime||todayStr()).replace(/-/g,'/'),company:obj.company,assignee:needsAssigneeLabel(obj.assignee)});
+      closeModal();renderActivities();
+      showToast((editId?'更新':'記録')+'しました（要望 '+added.map(function(a){return a.reqId;}).join('・')+' を台帳に追加）');
+    }catch(ex){
+      console.error('needs ledger write failed',ex);
+      closeModal();renderActivities();
+      var perm=/API 40[13]/.test(String(ex&&ex.message));
+      alert('活動は記録しましたが、要望を台帳に書き込めませんでした。\n'+(perm?'台帳の編集権限がありません。石井さんに編集権限の共有を依頼してください。':'時間をおいてもう一度試すか、台帳に直接入力してください。')+'\n\n'+needsUrl());
+    }
+    return;
+  }
+  closeModal();renderActivities();showToast(editId?'更新しました':'記録しました');
 }
 
 function isActivityOwner(a){
@@ -3258,6 +3289,201 @@ function isActivityOwner(a){
 }
 // 活動の編集はログイン済みなら誰でも可（担当者の誤入力を本人以外が直せるように。案件の削除を全員可にした2026-06の判断と同じ扱い）。削除は本人/管理者のみ。
 function canEditActivity(a){return !!a;}
+
+// ==================== MM 顧客要望（石井さん台帳への書き込み 2026-11-24） ====================
+// 正本は石井さんのスプレッドシート「モバイルムーバー 顧客要望・新機能ヒアリング管理台帳」。
+// 活動の記録と同時に、そこへ1要望1行で書き込む（台帳上部の件数集計はシート側のまま使える）。
+// 列は見出し行（「要望ID」を含む行）の文字で探すので、列の並べ替え・追加があっても書き込み先はずれない。
+// 書き込みはログイン中ユーザーの権限で行う＝台帳の編集権限が要る。
+var NEEDS_SHEET_ID='1bto66iASlBoy08IvdCgvPF7bmNYILSJh4ZUbrzK8cKg';
+var NEEDS_TAB='顧客要望管理';
+var NEEDS_COLS=[ // key, 見出しに含まれる文字
+  ['reqId','要望ID'],['date','ヒアリング日'],['company','顧客'],['crop','作物'],['theme','テーマ'],
+  ['category','開発区分'],['background','背景'],['assignee','営業担当'],['priority','優先度'],['status','対応状況'],['next','次回アクション']
+];
+var NEEDS_CATEGORY_DEFAULT=['作業アタッチメント','自動走行・制御','車体構造・足回り'];
+var NEEDS_PRIORITY=['A - 最優先','B - 中期検討','C - 低/保留'];
+var NEEDS_STATUS_DEFAULT=['要望受付','技術検討中','実証予定','見送り','完了'];
+var needsLedger=null; // {tab,sheetGid,rowCount,headerRow(0始まり),col:{key:列index},rows:[{_row,reqId,...}]}
+var _needsLoading=null;
+
+function needsUrl(){return 'https://docs.google.com/spreadsheets/d/'+NEEDS_SHEET_ID+'/edit'+(needsLedger&&needsLedger.sheetGid!=null?'#gid='+needsLedger.sheetGid:'');}
+function needsNormCompany(s){return String(s||'').replace(/[\s　]/g,'').replace(/[（(].*?[）)]/g,'').replace(/株式会社|有限会社|合同会社|\(株\)|（株）/g,'');}
+function needsDateKey(s){ // 2026/10/14・2026-10-14 → 2026-10-14
+  var m=String(s||'').match(/(\d{4})[\/\-年.](\d{1,2})[\/\-月.](\d{1,2})/);
+  return m?m[1]+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[3]).padStart(2,'0'):'';
+}
+// 台帳の営業担当は「山崎」表記（石井さんの台帳に合わせる）
+function needsAssigneeLabel(name){var n=normalizeAssignee(name);return n==='山﨑'?'山崎':n;}
+
+async function loadNeedsLedger(force){
+  if(needsLedger&&!force)return needsLedger;
+  if(_needsLoading&&!force)return _needsLoading;
+  _needsLoading=(async function(){
+    var meta=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+NEEDS_SHEET_ID+'?fields=sheets.properties');
+    var sheets=meta.sheets||[];
+    var sp=(sheets.find(function(s){return s.properties.title===NEEDS_TAB;})||sheets[0]||{}).properties;
+    if(!sp)throw new Error('台帳のタブが見つかりません');
+    var v=await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+NEEDS_SHEET_ID+'/values/'+encodeURIComponent("'"+sp.title+"'!A1:Z2000")+'?valueRenderOption=FORMATTED_VALUE');
+    var vals=v.values||[];
+    var hr=-1;
+    for(var i=0;i<Math.min(vals.length,40);i++){if((vals[i]||[]).some(function(c){return String(c).trim()==='要望ID';})){hr=i;break;}}
+    if(hr<0)throw new Error('台帳の見出し行（要望ID）が見つかりません');
+    var col={};
+    NEEDS_COLS.forEach(function(kc){
+      var idx=(vals[hr]||[]).findIndex(function(c){return String(c).indexOf(kc[1])!==-1;});
+      if(idx>=0)col[kc[0]]=idx;
+    });
+    if(col.reqId==null||col.theme==null)throw new Error('台帳の列（要望ID/テーマ）が見つかりません');
+    var rows=[];
+    for(var r=hr+1;r<vals.length;r++){
+      var row=vals[r]||[];var o={_row:r};
+      Object.keys(col).forEach(function(k){o[k]=String(row[col[k]]==null?'':row[col[k]]).trim();});
+      if(!o.reqId&&!o.theme&&!o.company)continue;
+      rows.push(o);
+    }
+    needsLedger={tab:sp.title,sheetGid:sp.sheetId,rowCount:(sp.gridProperties&&sp.gridProperties.rowCount)||1000,headerRow:hr,col:col,rows:rows};
+    return needsLedger;
+  })();
+  try{return await _needsLoading;}finally{_needsLoading=null;}
+}
+function needsOptionList(key,defaults){
+  var list=defaults.slice();
+  if(needsLedger)needsLedger.rows.forEach(function(r){var v=r[key];if(v&&list.indexOf(v)===-1)list.push(v);});
+  return list;
+}
+function needsFor(company,dateKey){
+  if(!needsLedger||!company)return [];
+  var c=needsNormCompany(company);if(!c)return [];
+  return needsLedger.rows.filter(function(r){
+    if(!r.theme)return false;
+    var rc=needsNormCompany(r.company);
+    if(!rc||(rc.indexOf(c)===-1&&c.indexOf(rc)===-1))return false;
+    return !dateKey||needsDateKey(r.date)===dateKey;
+  });
+}
+function needsPriorityBadge(p){
+  var k=String(p||'').charAt(0);
+  var st=k==='A'?'background:#fee2e2;color:#b91c1c':k==='B'?'background:#fef3c7;color:#b45309':k==='C'?'background:#f1f1f1;color:#777':'background:#eef6f1;color:#5a7a6a';
+  return '<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:.78em;font-weight:700;'+st+'">'+escapeHtml(p||'優先度未設定')+'</span>';
+}
+function needsListHtml(list){
+  var h='';
+  list.forEach(function(r){
+    h+='<div style="padding:8px 12px;background:#f0f7ff;border:1px solid #d6e6f7;border-radius:8px;margin-bottom:6px;font-size:.85em">';
+    h+='<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span style="color:#5a7a6a;font-size:.85em">'+escapeHtml(r.reqId||'')+'</span><span style="font-weight:700;flex:1">'+escapeHtml(r.theme)+'</span>'+needsPriorityBadge(r.priority)+(r.status?'<span style="font-size:.78em;color:#1a6b4a;font-weight:600">'+escapeHtml(r.status)+'</span>':'')+'</div>';
+    var sub=[r.category,r.crop,r.date].filter(Boolean).join(' ／ ');
+    if(sub)h+='<div style="color:#5a7a6a;font-size:.82em;margin-top:2px">'+escapeHtml(sub)+'</div>';
+    if(r.background)h+='<div style="margin-top:4px;line-height:1.5">'+escapeHtml(r.background)+'</div>';
+    if(r.next)h+='<div style="margin-top:3px;color:#1e5a8a;font-size:.9em">→ '+escapeHtml(r.next)+'</div>';
+    h+='</div>';
+  });
+  return h;
+}
+// 活動詳細・顧客詳細に要望を差し込む（台帳は非同期で読む）
+async function fillNeedsBox(elId,company,dateKey){
+  var el=document.getElementById(elId);if(!el)return;
+  try{
+    await loadNeedsLedger();
+    var list=needsFor(company,dateKey);
+    el=document.getElementById(elId);if(!el)return;
+    if(!list.length){el.innerHTML='<p style="font-size:.85em;color:#5a7a6a">なし</p>';return;}
+    list.sort(function(a,b){return needsDateKey(b.date).localeCompare(needsDateKey(a.date))||String(a.reqId).localeCompare(String(b.reqId));});
+    el.innerHTML=needsListHtml(list);
+  }catch(e){
+    console.warn('needs ledger load failed',e);
+    el=document.getElementById(elId);if(el)el.innerHTML='<p style="font-size:.8em;color:#b45309">台帳を読めませんでした（閲覧権限を確認してください）。<a href="'+escapeAttr(needsUrl())+'" target="_blank" rel="noopener" style="color:#1a6b4a">台帳を開く ↗</a></p>';
+  }
+}
+
+// ---- 活動フォームの要望入力欄 ----
+var _needsFormCount=0;
+function needsFormSectionHtml(existing){
+  _needsFormCount=0;
+  var h='<div class="form-group" style="background:#f0f7ff;border:1px solid #cfe0f3;border-radius:10px;padding:10px 12px;margin-bottom:12px">';
+  h+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="font-weight:600;color:#1e4a75">&#128161; お客様の要望・ニーズ（MM）</span>';
+  h+='<a href="'+escapeAttr(needsUrl())+'" target="_blank" rel="noopener" style="font-size:.78em;color:#1a6b4a;margin-left:auto">台帳を開く ↗</a></div>';
+  h+='<div style="font-size:.78em;color:#4a6a8a;margin-top:4px">記録すると石井さんの「顧客要望・新機能ヒアリング管理台帳」に1件1行で追加されます（顧客・ヒアリング日・営業担当は上の内容を使います）。</div>';
+  if(existing)h+='<div id="needs-existing" style="margin-top:8px"></div>';
+  h+='<div id="needs-blocks"></div>';
+  h+='<button type="button" class="btn-small" style="margin-top:8px" onclick="addNeedBlock()">＋ 要望を追加</button>';
+  h+='</div>';
+  return h;
+}
+function addNeedBlock(){
+  var wrap=document.getElementById('needs-blocks');if(!wrap)return;
+  var i=++_needsFormCount;
+  var cats=needsOptionList('category',NEEDS_CATEGORY_DEFAULT);
+  var sts=needsOptionList('status',NEEDS_STATUS_DEFAULT);
+  // 同じ顧客の直近の作物・圃場を初期値に
+  var custId=(document.getElementById('f-actcust')||{}).value;
+  var cust=customers.find(function(x){return x.id===custId;});
+  var prevCrop='';
+  if(cust){var prev=needsFor(cust.company,'');if(prev.length){prev.sort(function(a,b){return needsDateKey(b.date).localeCompare(needsDateKey(a.date));});prevCrop=prev[0].crop||'';}}
+  var d=document.createElement('div');
+  d.id='need-'+i;d.className='need-block';
+  d.style.cssText='background:#fff;border:1px solid #d6e6f7;border-radius:8px;padding:8px 10px;margin-top:8px';
+  var h='<div style="display:flex;align-items:center;margin-bottom:4px"><span style="font-size:.8em;font-weight:700;color:#1e4a75">要望 '+i+'</span><button type="button" class="btn-text" style="margin-left:auto;font-size:.8em;color:#b91c1c" onclick="removeNeedBlock('+i+')">削除</button></div>';
+  h+='<input class="form-input" id="nd-theme-'+i+'" placeholder="要望テーマ（例：車輪幅の狭小化）＊必須" style="margin-bottom:6px">';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">';
+  h+='<select class="form-input" id="nd-cat-'+i+'"><option value="">開発区分</option>'+cats.map(function(c){return '<option value="'+escapeAttr(c)+'">'+escapeHtml(c)+'</option>';}).join('')+'</select>';
+  h+='<input class="form-input" id="nd-crop-'+i+'" placeholder="対象作物・圃場" value="'+escapeAttr(prevCrop)+'"></div>';
+  h+='<textarea class="form-input" id="nd-bg-'+i+'" placeholder="要望背景・現場課題・期待効果" style="min-height:60px;margin-bottom:6px"></textarea>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">';
+  h+='<select class="form-input" id="nd-pri-'+i+'"><option value="">優先度（あとで）</option>'+NEEDS_PRIORITY.map(function(p){return '<option value="'+escapeAttr(p)+'">'+escapeHtml(p)+'</option>';}).join('')+'</select>';
+  h+='<select class="form-input" id="nd-st-'+i+'">'+sts.map(function(s){return '<option value="'+escapeAttr(s)+'"'+(s==='要望受付'?' selected':'')+'>'+escapeHtml(s)+'</option>';}).join('')+'</select></div>';
+  h+='<input class="form-input" id="nd-next-'+i+'" placeholder="次回アクション・備考">';
+  d.innerHTML=h;
+  wrap.appendChild(d);
+  var t=document.getElementById('nd-theme-'+i);if(t)t.focus();
+}
+function removeNeedBlock(i){var d=document.getElementById('need-'+i);if(d)d.remove();}
+function collectNeedBlocks(){
+  var out=[];
+  document.querySelectorAll('#needs-blocks .need-block').forEach(function(d){
+    var i=d.id.replace('need-','');
+    function v(p){var e=document.getElementById(p+i);return e?String(e.value||'').trim():'';}
+    var o={theme:v('nd-theme-'),category:v('nd-cat-'),crop:v('nd-crop-'),background:v('nd-bg-'),priority:v('nd-pri-'),status:v('nd-st-'),next:v('nd-next-')};
+    var any=o.theme||o.category||o.background||o.priority||o.next;
+    if(any)out.push(o);
+  });
+  return out;
+}
+function nextReqId(rows){
+  var max=0;rows.forEach(function(r){var m=String(r.reqId||'').match(/(\d+)/);if(m)max=Math.max(max,Number(m[1]));});
+  return 'REQ-'+String(max+1).padStart(3,'0');
+}
+// 台帳へ書き込む。先に番号だけ振ってある空行（例：REQ-018）があればそこを使い、なければ最終行の下に足す。
+async function saveNeedsToLedger(needs,base){
+  var L=await loadNeedsLedger(true); // 書く直前に読み直す（番号の重複を避ける）
+  var c=L.col,maxCol=0;Object.keys(c).forEach(function(k){maxCol=Math.max(maxCol,c[k]);});
+  var blanks=L.rows.filter(function(r){return r.reqId&&!r.theme&&!r.company;}).sort(function(a,b){return a._row-b._row;});
+  var lastRow=L.rows.length?Math.max.apply(null,L.rows.map(function(r){return r._row;})):L.headerRow;
+  var data=[],added=[],work=L.rows.slice();
+  needs.forEach(function(n){
+    var row,reqId;
+    if(blanks.length){var b=blanks.shift();row=b._row;reqId=b.reqId;}
+    else{row=++lastRow;reqId=nextReqId(work);}
+    var rec={reqId:reqId,date:base.date,company:base.company,crop:n.crop,theme:n.theme,category:n.category,background:n.background,assignee:base.assignee,priority:n.priority,status:n.status||'要望受付',next:n.next};
+    work.push({reqId:reqId});
+    Object.keys(c).forEach(function(k){
+      if(rec[k]==null)return;
+      var val=String(rec[k]);
+      if(k!=='date'&&/^[=+\-@]/.test(val))val="'"+val; // 数式として解釈させない
+      data.push({range:"'"+L.tab+"'!"+colLetter(c[k]+1)+(row+1),values:[[val]]});
+    });
+    rec._row=row;added.push(rec);
+  });
+  var needRows=lastRow+1;
+  if(needRows>L.rowCount){
+    await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+NEEDS_SHEET_ID+':batchUpdate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({requests:[{appendDimension:{sheetId:L.sheetGid,dimension:'ROWS',length:needRows-L.rowCount+5}}]})});
+  }
+  await apiFetch('https://sheets.googleapis.com/v4/spreadsheets/'+NEEDS_SHEET_ID+'/values:batchUpdate',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({valueInputOption:'USER_ENTERED',data:data})});
+  await loadNeedsLedger(true).catch(function(){});
+  return added;
+}
 async function deleteActivity(id){
   var a=activities.find(function(x){return x.id===id});
   if(!isActivityOwner(a)){showToast('削除は記録した本人のみ可能です');return;}
